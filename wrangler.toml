@@ -1,0 +1,19 @@
+name = "ppcn-credentialing-dashboard"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ppcn-credentialing"
+database_id = "local-dev-ppcn-credentialing"
+migrations_dir = "migrations"
+
+[vars]
+APP_NAME = "PPCN Credentialing Dashboard"
+SESSION_DAYS = "14"
