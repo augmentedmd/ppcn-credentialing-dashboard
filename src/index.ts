@@ -17,6 +17,8 @@ import {
 import type {
   Env,
   ItemStatus,
+  PacketEventRow,
+  PacketEventType,
   PacketItemRow,
   PacketRow,
   PacketStatus,
@@ -27,6 +29,67 @@ import type {
 } from "./types";
 
 type Authed = { user: PublicUser; row: UserRow };
+
+const ITEM_STATUS_LABELS: Record<ItemStatus, string> = {
+  pending: "Pending",
+  complete: "Done",
+  na: "N/A",
+};
+
+const VOTE_LABELS: Record<VoteChoice, string> = {
+  yes: "Yes",
+  no: "No",
+  pause_for_query: "Pause for Query",
+};
+
+async function logPacketEvent(
+  env: Env,
+  packetId: string,
+  actor: { id?: string | null; name: string } | null,
+  eventType: PacketEventType,
+  summary: string,
+  detail = ""
+) {
+  await env.DB.prepare(
+    `INSERT INTO packet_events
+      (id, packet_id, actor_user_id, actor_name, event_type, summary, detail)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(
+      newId("evt"),
+      packetId,
+      actor?.id || null,
+      actor?.name || "System",
+      eventType,
+      summary,
+      detail
+    )
+    .run();
+}
+
+function mapEvent(row: PacketEventRow) {
+  return {
+    id: row.id,
+    packetId: row.packet_id,
+    actorUserId: row.actor_user_id,
+    actorName: row.actor_name,
+    eventType: row.event_type,
+    summary: row.summary,
+    detail: row.detail,
+    createdAt: row.created_at,
+  };
+}
+
+async function loadPacketActivity(env: Env, packetId: string) {
+  const events = (
+    await env.DB.prepare(
+      `SELECT * FROM packet_events WHERE packet_id = ? ORDER BY created_at DESC, rowid DESC`
+    )
+      .bind(packetId)
+      .all<PacketEventRow>()
+  ).results;
+  return events.map(mapEvent);
+}
 
 async function getUserBySession(env: Env, request: Request): Promise<Authed | null> {
   const cookies = parseCookies(request.headers.get("Cookie"));
@@ -181,41 +244,58 @@ async function recomputePacketStatus(env: Env, packetId: string): Promise<Packet
       .all<VoteRow>()
   ).results;
 
+  const prev = packet.status;
   const cast = votes.filter((v) => v.vote);
   const hasPause = cast.some((v) => v.vote === "pause_for_query");
+  let next: PacketStatus;
+
   if (hasPause) {
     await env.DB.prepare(
       `UPDATE packets SET status = 'query_pending', updated_at = datetime('now'), closed_at = NULL WHERE id = ?`
     )
       .bind(packetId)
       .run();
-    return "query_pending";
-  }
-
-  if (cast.length < votes.length || votes.length === 0) {
+    next = "query_pending";
+  } else if (cast.length < votes.length || votes.length === 0) {
     await env.DB.prepare(
       `UPDATE packets SET status = 'ready_for_review', updated_at = datetime('now'), closed_at = NULL WHERE id = ?`
     )
       .bind(packetId)
       .run();
-    return "ready_for_review";
-  }
-
-  if (cast.some((v) => v.vote === "no")) {
+    next = "ready_for_review";
+  } else if (cast.some((v) => v.vote === "no")) {
     await env.DB.prepare(
       `UPDATE packets SET status = 'denied', updated_at = datetime('now'), closed_at = datetime('now') WHERE id = ?`
     )
       .bind(packetId)
       .run();
-    return "denied";
+    next = "denied";
+  } else {
+    await env.DB.prepare(
+      `UPDATE packets SET status = 'approved', updated_at = datetime('now'), closed_at = datetime('now') WHERE id = ?`
+    )
+      .bind(packetId)
+      .run();
+    next = "approved";
   }
 
-  await env.DB.prepare(
-    `UPDATE packets SET status = 'approved', updated_at = datetime('now'), closed_at = datetime('now') WHERE id = ?`
-  )
-    .bind(packetId)
-    .run();
-  return "approved";
+  if (next !== prev) {
+    const summaries: Record<PacketStatus, string> = {
+      in_progress: "Packet returned to in progress",
+      ready_for_review: "Packet returned to Ready for Review",
+      query_pending: "Packet held for query",
+      approved: "Packet approved",
+      denied: "Packet denied",
+    };
+    const details: Partial<Record<PacketStatus, string>> = {
+      query_pending: "At least one governing board member paused for query",
+      approved: "All governing board votes were Yes",
+      denied: "At least one governing board vote was No",
+    };
+    await logPacketEvent(env, packetId, null, "status_changed", summaries[next], details[next] || "");
+  }
+
+  return next;
 }
 
 async function handleApi(request: Request, env: Env): Promise<Response> {
@@ -424,6 +504,15 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     if (itemStmts.length) await env.DB.batch(itemStmts);
     await createVoteSlots(env, packetId);
 
+    await logPacketEvent(
+      env,
+      packetId,
+      { id: auth.user.id, name: auth.user.displayName },
+      "packet_created",
+      `Opened credentialing packet for ${body.providerName.trim()}`,
+      `${body.credentialingType === "new" ? "New credentialing" : "Recredentialing"} · ${SPECIALTIES[body.specialty]}`
+    );
+
     const detail = await loadPacketDetail(env, packetId);
     return json({ packet: detail }, { status: 201 });
   }
@@ -442,6 +531,17 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       return json({ packet: detail });
     }
 
+    if (method === "GET" && rest === "/activity") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+      const exists = await env.DB.prepare(`SELECT id FROM packets WHERE id = ?`)
+        .bind(packetId)
+        .first();
+      if (!exists) return error("Packet not found", 404);
+      const activity = await loadPacketActivity(env, packetId);
+      return json({ activity });
+    }
+
     if (method === "PATCH" && rest === "") {
       const auth = await requireAdmin(env, request);
       if (auth instanceof Response) return auth;
@@ -457,6 +557,12 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         privilegeBlocks?: string[];
       } | null;
 
+      const nextName = body?.providerName?.trim() || existing.provider_name;
+      const nextNotes = body?.notes !== undefined ? body.notes : existing.notes;
+      const nextBlocks = body?.privilegeBlocks
+        ? JSON.stringify(body.privilegeBlocks)
+        : existing.privilege_blocks;
+
       await env.DB.prepare(
         `UPDATE packets SET
            provider_name = ?,
@@ -465,15 +571,23 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
            updated_at = datetime('now')
          WHERE id = ?`
       )
-        .bind(
-          body?.providerName?.trim() || existing.provider_name,
-          body?.notes !== undefined ? body.notes : existing.notes,
-          body?.privilegeBlocks
-            ? JSON.stringify(body.privilegeBlocks)
-            : existing.privilege_blocks,
-          packetId
-        )
+        .bind(nextName, nextNotes, nextBlocks, packetId)
         .run();
+
+      const changes: string[] = [];
+      if (nextName !== existing.provider_name) changes.push(`Provider name → ${nextName}`);
+      if (nextNotes !== existing.notes) changes.push("Updated notes");
+      if (nextBlocks !== existing.privilege_blocks) changes.push("Updated privilege blocks");
+      if (changes.length) {
+        await logPacketEvent(
+          env,
+          packetId,
+          { id: auth.user.id, name: auth.user.displayName },
+          "packet_updated",
+          "Updated packet details",
+          changes.join("; ")
+        );
+      }
 
       return json({ packet: await loadPacketDetail(env, packetId) });
     }
@@ -509,6 +623,9 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         .first<PacketItemRow>();
       if (!item) return error("Checklist item not found", 404);
 
+      const nextStatus = (body?.status || item.status) as ItemStatus;
+      const nextNotes = body?.notes !== undefined ? body.notes : item.notes;
+
       await env.DB.prepare(
         `UPDATE packet_items SET
            status = ?,
@@ -516,11 +633,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
            updated_at = datetime('now')
          WHERE id = ?`
       )
-        .bind(
-          body?.status || item.status,
-          body?.notes !== undefined ? body.notes : item.notes,
-          itemId
-        )
+        .bind(nextStatus, nextNotes, itemId)
         .run();
 
       await env.DB.prepare(
@@ -528,6 +641,19 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       )
         .bind(packetId)
         .run();
+
+      if (nextStatus !== item.status || nextNotes !== item.notes) {
+        const parts: string[] = [];
+        if (nextNotes !== item.notes && nextNotes.trim()) parts.push(nextNotes.trim());
+        await logPacketEvent(
+          env,
+          packetId,
+          { id: auth.user.id, name: auth.user.displayName },
+          "item_status_changed",
+          `Marked “${item.label}” ${ITEM_STATUS_LABELS[nextStatus]}`,
+          parts.join(" · ")
+        );
+      }
 
       return json({ packet: await loadPacketDetail(env, packetId) });
     }
@@ -562,6 +688,17 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       )
         .bind(packetId)
         .run();
+
+      await logPacketEvent(
+        env,
+        packetId,
+        { id: auth.user.id, name: auth.user.displayName },
+        "marked_ready",
+        detail.status === "query_pending"
+          ? "Returned packet to Ready for Review after query resolution"
+          : "Marked packet Ready for Review",
+        "All checklist components Complete or N/A"
+      );
 
       return json({ packet: await loadPacketDetail(env, packetId) });
     }
@@ -614,6 +751,26 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         )
         .run();
 
+      if (body.vote === "pause_for_query") {
+        await logPacketEvent(
+          env,
+          packetId,
+          { id: auth.user.id, name: auth.user.displayName },
+          "query_opened",
+          "Paused for query",
+          body.concern!.trim()
+        );
+      } else {
+        await logPacketEvent(
+          env,
+          packetId,
+          { id: auth.user.id, name: auth.user.displayName },
+          "vote_cast",
+          `Voted ${VOTE_LABELS[body.vote]}`,
+          body.concern?.trim() || ""
+        );
+      }
+
       await recomputePacketStatus(env, packetId);
       return json({ packet: await loadPacketDetail(env, packetId) });
     }
@@ -653,6 +810,15 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       )
         .bind(packetId)
         .run();
+
+      await logPacketEvent(
+        env,
+        packetId,
+        { id: auth.user.id, name: auth.user.displayName },
+        "query_resolved",
+        `Responded to ${vote.voter_name}'s query`,
+        body.queryResolution.trim()
+      );
 
       return json({ packet: await loadPacketDetail(env, packetId) });
     }

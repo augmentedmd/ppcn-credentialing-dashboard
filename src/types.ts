@@ -85,3 +85,24 @@ export interface ChecklistDef {
   key: string;
   label: string;
 }
+
+export type PacketEventType =
+  | "packet_created"
+  | "packet_updated"
+  | "item_status_changed"
+  | "marked_ready"
+  | "vote_cast"
+  | "query_opened"
+  | "query_resolved"
+  | "status_changed";
+
+export interface PacketEventRow {
+  id: string;
+  packet_id: string;
+  actor_user_id: string | null;
+  actor_name: string;
+  event_type: PacketEventType | string;
+  summary: string;
+  detail: string;
+  created_at: string;
+}
