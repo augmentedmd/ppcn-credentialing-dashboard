@@ -9,7 +9,8 @@ Part of the [AugmentedMD](https://github.com/augmentedmd/augmentedmd) tool panel
 1. **Packet checklist** — For each provider application, track the documentation components from the [PPCN Privileging Requirements Guide](https://ppcn-credentialing.pages.dev/) (references, licenses, DOP, case log, health forms, etc.) as *Pending*, *Complete*, or *N/A*.
 2. **Ready for review** — When every component is Complete or N/A, credentialing staff marks the packet **Ready for Review**.
 3. **Governing board votes** — Ken Long, Michael Gorin, Michael Herman, Vijay Mukhija, and Stelios Koutsoumbelis each vote **Yes**, **No**, or **Pause for Query**.
-4. **Query workflow** — Pause votes require written concerns; staff record a query resolution; the packet can return to Ready for Review for re-vote.
+4. **Query workflow** — Pause votes require written concerns; an **Open queries** panel lets staff post a written response on the packet; the packet can return to Ready for Review for re-vote.
+5. **Activity log** — Each packet keeps a dated trail of checklist changes, votes, queries, and responses (open via **Activity log** next to the clinician’s name).
 
 ## Stack
 
@@ -74,6 +75,7 @@ Open the URL Wrangler prints (usually `http://127.0.0.1:8787`).
 | GET | `/api/me` | Authenticated |
 | POST | `/api/change-password` | Authenticated |
 | GET/POST | `/api/packets` | Auth / admin create |
+| GET | `/api/packets/:id/activity` | Auth — packet activity log |
 | PATCH | `/api/packets/:id/items/:itemId` | Admin |
 | POST | `/api/packets/:id/ready` | Admin |
 | POST | `/api/packets/:id/votes` | Board |
