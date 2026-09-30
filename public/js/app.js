@@ -463,11 +463,6 @@ function renderDetail(p) {
             ? `<span class="progress-label">Respond to each open query below, then return the packet to review.</span>`
             : ""
         }
-        ${
-          state.user.role === "admin"
-            ? `<button class="btn danger sm" data-action="delete-packet">Delete packet</button>`
-            : ""
-        }
       </div>
     </section>
 
@@ -533,6 +528,18 @@ function renderDetail(p) {
         </div>
       </div>
     </section>
+
+    ${
+      state.user.role === "admin"
+        ? `<section class="section danger-zone">
+            <div class="section-h danger"><span>Danger zone</span></div>
+            <div class="section-b">
+              <p class="danger-zone-copy">Permanently delete this credentialing packet and its checklist, votes, and activity log. This cannot be undone.</p>
+              <button class="btn danger" data-action="delete-packet">Delete packet</button>
+            </div>
+          </section>`
+        : ""
+    }
   `;
 }
 
@@ -673,6 +680,11 @@ function renderChecklistAdmin() {
   const specialty = defs.filter((d) => d.scope === "specialty");
   const packet = defs.filter((d) => d.scope === "packet");
 
+  const packetName = (packetId) => {
+    const p = (state.packets || []).find((x) => x.id === packetId);
+    return p ? p.providerName : packetId;
+  };
+
   const row = (d) => `
     <div class="check-row template-row">
       <div>
@@ -680,7 +692,7 @@ function renderChecklistAdmin() {
         <div class="notes">
           ${d.scope === "global" ? `Global · ${d.credentialingType}` : ""}
           ${d.scope === "specialty" ? `Specialty · ${esc(d.specialtyLabel || d.specialty)} · ${d.credentialingType}` : ""}
-          ${d.scope === "packet" ? `Provider packet · ${esc(d.packetId)}` : ""}
+          ${d.scope === "packet" ? `Provider · ${esc(packetName(d.packetId))}` : ""}
         </div>
       </div>
       <div class="btn-row">
@@ -719,6 +731,7 @@ function renderChecklistAdmin() {
 function modalChecklistDef(defaults = {}) {
   const specialties = state.meta?.specialties || {};
   const packets = state.packets || [];
+  const scope = defaults.scope || "global";
   return `
     <div class="modal-backdrop" data-action="close-modal">
       <form class="modal" id="checklist-def-form" data-stop>
@@ -729,31 +742,39 @@ function modalChecklistDef(defaults = {}) {
         </label>
         <label class="fld"><span>Applies to</span>
           <select name="scope" id="cdef-scope" required>
-            <option value="global" ${defaults.scope === "global" || !defaults.scope ? "selected" : ""}>All packets (global)</option>
-            <option value="specialty" ${defaults.scope === "specialty" ? "selected" : ""}>One specialty</option>
-            <option value="packet" ${defaults.scope === "packet" ? "selected" : ""}>One provider / packet</option>
+            <option value="global" ${scope === "global" ? "selected" : ""}>All packets (global)</option>
+            <option value="specialty" ${scope === "specialty" ? "selected" : ""}>One specialty</option>
+            <option value="packet" ${scope === "packet" ? "selected" : ""}>One provider</option>
           </select>
         </label>
-        <label class="fld" id="cdef-type-wrap"><span>Credentialing type</span>
-          <select name="credentialingType">
+        <label class="fld ${scope === "packet" ? "is-hidden" : ""}" id="cdef-type-wrap" ${scope === "packet" ? "hidden" : ""}>
+          <span>Credentialing type</span>
+          <select name="credentialingType" id="cdef-type" ${scope === "packet" ? "disabled" : ""}>
             <option value="both">New and recredentialing</option>
             <option value="new">New credentialing only</option>
             <option value="recred">Recredentialing only</option>
           </select>
         </label>
-        <label class="fld" id="cdef-specialty-wrap" hidden><span>Specialty</span>
-          <select name="specialty">
+        <label class="fld ${scope === "specialty" ? "" : "is-hidden"}" id="cdef-specialty-wrap" ${scope === "specialty" ? "" : "hidden"}>
+          <span>Specialty</span>
+          <select name="specialty" id="cdef-specialty" ${scope === "specialty" ? "" : "disabled"}>
+            <option value="">Select a specialty…</option>
             ${Object.entries(specialties)
-              .map(([k, v]) => `<option value="${esc(k)}" ${defaults.specialty === k ? "selected" : ""}>${esc(v)}</option>`)
+              .map(
+                ([k, v]) =>
+                  `<option value="${esc(k)}" ${defaults.specialty === k ? "selected" : ""}>${esc(v)}</option>`
+              )
               .join("")}
           </select>
         </label>
-        <label class="fld" id="cdef-packet-wrap" hidden><span>Provider packet</span>
-          <select name="packetId">
+        <label class="fld ${scope === "packet" ? "" : "is-hidden"}" id="cdef-packet-wrap" ${scope === "packet" ? "" : "hidden"}>
+          <span>Provider</span>
+          <select name="packetId" id="cdef-packet" ${scope === "packet" ? "required" : "disabled"}>
+            <option value="">Select a provider…</option>
             ${packets
               .map(
                 (p) =>
-                  `<option value="${esc(p.id)}" ${defaults.packetId === p.id ? "selected" : ""}>${esc(p.providerName)} (${esc(p.specialtyLabel)})</option>`
+                  `<option value="${esc(p.id)}" ${defaults.packetId === p.id ? "selected" : ""}>${esc(p.providerName)} — ${esc(p.specialtyLabel)}</option>`
               )
               .join("")}
           </select>
@@ -829,6 +850,28 @@ function modalPauseQuery() {
         <div class="modal-actions">
           <button type="button" class="btn ghost" data-action="close-modal">Cancel</button>
           <button type="submit" class="btn primary">Submit pause</button>
+        </div>
+      </form>
+    </div>
+  `;
+}
+
+function modalDeletePacket(packet) {
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <form class="modal" id="delete-packet-form" data-stop>
+        <h3>Delete packet</h3>
+        <p style="margin:0;color:var(--muted)">
+          This will permanently delete <strong>${esc(packet.providerName)}</strong> and all related checklist items, votes, and activity history.
+        </p>
+        <label class="fld">
+          <span>Type DELETE PACKET to confirm</span>
+          <input name="confirmText" required autocomplete="off" spellcheck="false" placeholder="DELETE PACKET">
+        </label>
+        <p class="form-error" id="delete-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" data-action="close-modal">Cancel</button>
+          <button type="submit" class="btn danger">Delete permanently</button>
         </div>
       </form>
     </div>
@@ -963,9 +1006,19 @@ function bind() {
   if (cdef) {
     const syncScope = () => {
       const scope = document.getElementById("cdef-scope").value;
-      document.getElementById("cdef-specialty-wrap").hidden = scope !== "specialty";
-      document.getElementById("cdef-packet-wrap").hidden = scope !== "packet";
-      document.getElementById("cdef-type-wrap").hidden = scope === "packet";
+      const setVisible = (wrapId, inputId, visible, required = false) => {
+        const wrap = document.getElementById(wrapId);
+        const input = document.getElementById(inputId);
+        if (!wrap || !input) return;
+        wrap.hidden = !visible;
+        wrap.classList.toggle("is-hidden", !visible);
+        input.disabled = !visible;
+        if (required) input.required = visible;
+        else input.required = false;
+      };
+      setVisible("cdef-type-wrap", "cdef-type", scope !== "packet");
+      setVisible("cdef-specialty-wrap", "cdef-specialty", scope === "specialty", true);
+      setVisible("cdef-packet-wrap", "cdef-packet", scope === "packet", true);
     };
     syncScope();
     document.getElementById("cdef-scope").addEventListener("change", syncScope);
@@ -975,6 +1028,16 @@ function bind() {
       const fd = new FormData(cdef);
       const err = document.getElementById("cdef-error");
       const scope = String(fd.get("scope"));
+      if (scope === "specialty" && !fd.get("specialty")) {
+        err.textContent = "Select a specialty.";
+        err.hidden = false;
+        return;
+      }
+      if (scope === "packet" && !fd.get("packetId")) {
+        err.textContent = "Select a provider.";
+        err.hidden = false;
+        return;
+      }
       try {
         await api("/api/checklist-defs", {
           method: "POST",
@@ -1036,6 +1099,33 @@ function bind() {
       try {
         await castVote("pause_for_query", String(fd.get("concern") || ""));
         state.modal = null;
+        render();
+      } catch (ex) {
+        err.textContent = ex.message;
+        err.hidden = false;
+      }
+    });
+  }
+
+  const deleteForm = document.getElementById("delete-packet-form");
+  if (deleteForm) {
+    deleteForm.addEventListener("click", (e) => e.stopPropagation());
+    deleteForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(deleteForm);
+      const err = document.getElementById("delete-error");
+      const typed = String(fd.get("confirmText") || "").trim();
+      if (typed !== "DELETE PACKET") {
+        err.textContent = 'Type DELETE PACKET exactly (all caps) to confirm.';
+        err.hidden = false;
+        return;
+      }
+      try {
+        await api(`/api/packets/${state.packetId}`, { method: "DELETE" });
+        state.packets = state.packets.filter((p) => p.id !== state.packetId);
+        state.packetId = null;
+        state.modal = null;
+        state.view = "list";
         render();
       } catch (ex) {
         err.textContent = ex.message;
@@ -1230,12 +1320,11 @@ async function onAction(e) {
   }
 
   if (action === "delete-packet") {
-    if (!confirm("Delete this packet permanently?")) return;
-    await api(`/api/packets/${state.packetId}`, { method: "DELETE" });
-    state.packets = state.packets.filter((p) => p.id !== state.packetId);
-    state.packetId = null;
-    state.view = "list";
+    const packet = currentPacket();
+    if (!packet) return;
+    state.modal = modalDeletePacket(packet);
     render();
+    return;
   }
 }
 

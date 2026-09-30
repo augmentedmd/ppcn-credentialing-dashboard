@@ -116,6 +116,11 @@ button, input, select, textarea {
   gap: 6px;
 }
 
+.fld.is-hidden,
+.fld[hidden] {
+  display: none !important;
+}
+
 .fld span {
   font-size: 0.75rem;
   font-weight: 700;
@@ -564,8 +569,19 @@ main.page {
 
 .section-h.slate { background: var(--slate); }
 .section-h.amber { background: var(--amber); }
+.section-h.danger { background: var(--red); }
 
 .section-b { padding: 16px 18px; }
+
+.danger-zone {
+  margin-top: 28px;
+}
+
+.danger-zone-copy {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
 
 .query-list {
   display: grid;
