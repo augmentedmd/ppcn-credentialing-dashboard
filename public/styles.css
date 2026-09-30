@@ -116,6 +116,11 @@ button, input, select, textarea {
   gap: 6px;
 }
 
+.fld.is-hidden,
+.fld[hidden] {
+  display: none !important;
+}
+
 .fld span {
   font-size: 0.75rem;
   font-weight: 700;

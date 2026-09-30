@@ -719,6 +719,7 @@ function renderChecklistAdmin() {
 function modalChecklistDef(defaults = {}) {
   const specialties = state.meta?.specialties || {};
   const packets = state.packets || [];
+  const scope = defaults.scope || "global";
   return `
     <div class="modal-backdrop" data-action="close-modal">
       <form class="modal" id="checklist-def-form" data-stop>
@@ -729,31 +730,39 @@ function modalChecklistDef(defaults = {}) {
         </label>
         <label class="fld"><span>Applies to</span>
           <select name="scope" id="cdef-scope" required>
-            <option value="global" ${defaults.scope === "global" || !defaults.scope ? "selected" : ""}>All packets (global)</option>
-            <option value="specialty" ${defaults.scope === "specialty" ? "selected" : ""}>One specialty</option>
-            <option value="packet" ${defaults.scope === "packet" ? "selected" : ""}>One provider / packet</option>
+            <option value="global" ${scope === "global" ? "selected" : ""}>All packets (global)</option>
+            <option value="specialty" ${scope === "specialty" ? "selected" : ""}>One specialty</option>
+            <option value="packet" ${scope === "packet" ? "selected" : ""}>One provider</option>
           </select>
         </label>
-        <label class="fld" id="cdef-type-wrap"><span>Credentialing type</span>
-          <select name="credentialingType">
+        <label class="fld ${scope === "packet" ? "is-hidden" : ""}" id="cdef-type-wrap" ${scope === "packet" ? "hidden" : ""}>
+          <span>Credentialing type</span>
+          <select name="credentialingType" id="cdef-type" ${scope === "packet" ? "disabled" : ""}>
             <option value="both">New and recredentialing</option>
             <option value="new">New credentialing only</option>
             <option value="recred">Recredentialing only</option>
           </select>
         </label>
-        <label class="fld" id="cdef-specialty-wrap" hidden><span>Specialty</span>
-          <select name="specialty">
+        <label class="fld ${scope === "specialty" ? "" : "is-hidden"}" id="cdef-specialty-wrap" ${scope === "specialty" ? "" : "hidden"}>
+          <span>Specialty</span>
+          <select name="specialty" id="cdef-specialty" ${scope === "specialty" ? "" : "disabled"}>
+            <option value="">Select a specialty…</option>
             ${Object.entries(specialties)
-              .map(([k, v]) => `<option value="${esc(k)}" ${defaults.specialty === k ? "selected" : ""}>${esc(v)}</option>`)
+              .map(
+                ([k, v]) =>
+                  `<option value="${esc(k)}" ${defaults.specialty === k ? "selected" : ""}>${esc(v)}</option>`
+              )
               .join("")}
           </select>
         </label>
-        <label class="fld" id="cdef-packet-wrap" hidden><span>Provider packet</span>
-          <select name="packetId">
+        <label class="fld ${scope === "packet" ? "" : "is-hidden"}" id="cdef-packet-wrap" ${scope === "packet" ? "" : "hidden"}>
+          <span>Provider</span>
+          <select name="packetId" id="cdef-packet" ${scope === "packet" ? "required" : "disabled"}>
+            <option value="">Select a provider…</option>
             ${packets
               .map(
                 (p) =>
-                  `<option value="${esc(p.id)}" ${defaults.packetId === p.id ? "selected" : ""}>${esc(p.providerName)} (${esc(p.specialtyLabel)})</option>`
+                  `<option value="${esc(p.id)}" ${defaults.packetId === p.id ? "selected" : ""}>${esc(p.providerName)} — ${esc(p.specialtyLabel)}</option>`
               )
               .join("")}
           </select>
@@ -963,9 +972,19 @@ function bind() {
   if (cdef) {
     const syncScope = () => {
       const scope = document.getElementById("cdef-scope").value;
-      document.getElementById("cdef-specialty-wrap").hidden = scope !== "specialty";
-      document.getElementById("cdef-packet-wrap").hidden = scope !== "packet";
-      document.getElementById("cdef-type-wrap").hidden = scope === "packet";
+      const setVisible = (wrapId, inputId, visible, required = false) => {
+        const wrap = document.getElementById(wrapId);
+        const input = document.getElementById(inputId);
+        if (!wrap || !input) return;
+        wrap.hidden = !visible;
+        wrap.classList.toggle("is-hidden", !visible);
+        input.disabled = !visible;
+        if (required) input.required = visible;
+        else input.required = false;
+      };
+      setVisible("cdef-type-wrap", "cdef-type", scope !== "packet");
+      setVisible("cdef-specialty-wrap", "cdef-specialty", scope === "specialty", true);
+      setVisible("cdef-packet-wrap", "cdef-packet", scope === "packet", true);
     };
     syncScope();
     document.getElementById("cdef-scope").addEventListener("change", syncScope);
@@ -975,6 +994,16 @@ function bind() {
       const fd = new FormData(cdef);
       const err = document.getElementById("cdef-error");
       const scope = String(fd.get("scope"));
+      if (scope === "specialty" && !fd.get("specialty")) {
+        err.textContent = "Select a specialty.";
+        err.hidden = false;
+        return;
+      }
+      if (scope === "packet" && !fd.get("packetId")) {
+        err.textContent = "Select a provider.";
+        err.hidden = false;
+        return;
+      }
       try {
         await api("/api/checklist-defs", {
           method: "POST",
