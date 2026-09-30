@@ -37,10 +37,15 @@ npm install
 npx wrangler d1 create ppcn-credentialing   # once; paste database_id into wrangler.toml
 npm run db:migrate:local
 npm run db:seed:local
+npm run db:demo:local   # optional: sample packets across checklist / voting stages
 npm run dev
 ```
 
 Open the URL Wrangler prints (usually `http://127.0.0.1:8787`).
+
+### Demo packets
+
+`npm run db:demo:local` (or `db:demo:remote`) loads nine fictional applications covering blank → early → mid → nearly complete → checklist done → ready for review → query pending → approved → denied. Safe to re-run (`INSERT OR IGNORE`). Keep this off production unless you intentionally want sample clinical data.
 
 ## Deploy to Cloudflare (GitHub)
 
