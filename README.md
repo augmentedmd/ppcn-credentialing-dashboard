@@ -11,6 +11,8 @@ Part of the [AugmentedMD](https://github.com/augmentedmd/augmentedmd) tool panel
 3. **Governing board votes** — Ken Long, Michael Gorin, Michael Herman, Vijay Mukhija, and Stelios Koutsoumbelis each vote **Yes**, **No**, or **Pause for Query**.
 4. **Query workflow** — Pause votes require written concerns; an **Open queries** panel lets staff post a written response on the packet; the packet can return to Ready for Review for re-vote.
 5. **Activity log** — Each packet keeps a dated trail of checklist changes, votes, queries, and responses (open via **Activity log** next to the clinician’s name).
+6. **Configurable checklist** — Admins manage required components globally, per specialty, or for a single provider (e.g. add “Disclosure Response”).
+7. **Sort & filter** — Packet list can be sorted/filtered by provider name, specialty, % complete, status, last activity, and creation date.
 
 ## Stack
 
@@ -76,6 +78,8 @@ Open the URL Wrangler prints (usually `http://127.0.0.1:8787`).
 | POST | `/api/change-password` | Authenticated |
 | GET/POST | `/api/packets` | Auth / admin create |
 | GET | `/api/packets/:id/activity` | Auth — packet activity log |
+| GET/POST | `/api/checklist-defs` | Auth list / admin create template items |
+| PATCH/DELETE | `/api/checklist-defs/:id` | Admin update or remove template items |
 | PATCH | `/api/packets/:id/items/:itemId` | Admin |
 | POST | `/api/packets/:id/ready` | Admin |
 | POST | `/api/packets/:id/votes` | Board |

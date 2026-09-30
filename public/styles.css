@@ -192,6 +192,16 @@ button, input, select, textarea {
   border-color: #f3c4c0;
 }
 
+.btn.warn {
+  background: #f5c518;
+  color: #5c4800;
+  border-color: #e0b000;
+}
+
+.btn.warn:hover:not(:disabled) {
+  background: #e8b80f;
+}
+
 .btn.sm { padding: 7px 12px; font-size: 0.88rem; }
 
 .btn-row {
@@ -371,9 +381,66 @@ main.page {
 .progress-bar > span {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--green), #3aa882);
+  background: rgb(38, 139, 107);
   border-radius: inherit;
-  transition: width 0.35s ease;
+  transition: width 0.35s ease, background-color 0.35s ease;
+}
+
+.detail-progress {
+  margin-top: 14px;
+}
+
+.list-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px 12px;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  background: rgba(255,255,255,0.72);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.list-controls .ctl {
+  display: grid;
+  gap: 5px;
+}
+
+.list-controls .ctl > span {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.list-controls input,
+.list-controls select {
+  width: 100%;
+  border: 1px solid #cdd5e0;
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.checkbox-row {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  grid-template-columns: none !important;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
+.checkbox-row span {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ink);
 }
 
 .progress-label {

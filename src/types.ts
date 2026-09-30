@@ -51,6 +51,25 @@ export interface PacketItemRow {
   status: ItemStatus;
   notes: string;
   updated_at: string;
+  source_scope?: string | null;
+  source_def_id?: string | null;
+}
+
+export type ChecklistScope = "global" | "specialty" | "packet";
+
+export type ChecklistCredentialingScope = "new" | "recred" | "both";
+
+export interface ChecklistDefRow {
+  id: string;
+  item_key: string;
+  label: string;
+  scope: ChecklistScope;
+  credentialing_type: ChecklistCredentialingScope;
+  specialty: string | null;
+  packet_id: string | null;
+  sort_order: number;
+  active: number;
+  created_at: string;
 }
 
 export interface VoteRow {
@@ -84,6 +103,8 @@ export interface PacketRow {
 export interface ChecklistDef {
   key: string;
   label: string;
+  defId?: string;
+  scope?: ChecklistScope;
 }
 
 export type PacketEventType =

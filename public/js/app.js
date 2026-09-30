@@ -35,10 +35,16 @@ let state = {
   meta: null,
   packets: [],
   filter: "all",
-  view: "list", // list | detail | password
+  specialtyFilter: "all",
+  nameQuery: "",
+  minPct: 0,
+  sortBy: "updatedAt", // name | specialty | pct | status | updatedAt | createdAt
+  sortDir: "desc", // asc | desc
+  view: "list", // list | detail | password | checklist
   packetId: null,
   modal: null,
-  activity: null, // { loading, error, events } when activity modal open
+  activity: null,
+  checklistDefs: [],
 };
 
 const app = document.getElementById("app");
@@ -69,13 +75,41 @@ function esc(s) {
     .replace(/"/g, "&quot;");
 }
 
-function statusBadge(status) {
+function statusBadge(status, pct = null) {
+  if (status === "in_progress" && pct != null) {
+    const color = progressColor(pct);
+    const bg = `color-mix(in srgb, ${color} 18%, white)`;
+    return `<span class="status in_progress" style="background:${bg};color:${color};border:1px solid color-mix(in srgb, ${color} 35%, white)">${esc(STATUS_LABELS[status])}</span>`;
+  }
   return `<span class="status ${esc(status)}">${esc(STATUS_LABELS[status] || status)}</span>`;
 }
 
 function progressPct(packet) {
   if (!packet.progress || !packet.progress.total) return 0;
   return Math.round((packet.progress.completed / packet.progress.total) * 100);
+}
+
+/** Red → amber → green based on completion percent. */
+function progressColor(pct) {
+  const p = Math.max(0, Math.min(100, Number(pct) || 0)) / 100;
+  const red = [180, 35, 24];
+  const amber = [183, 121, 31];
+  const green = [38, 139, 107];
+  const mix = (a, b, t) =>
+    a.map((v, i) => Math.round(v + (b[i] - v) * t));
+  const rgb = p < 0.5 ? mix(red, amber, p / 0.5) : mix(amber, green, (p - 0.5) / 0.5);
+  return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+}
+
+function progressLabel(packet) {
+  const completed = packet.progress?.completed || 0;
+  const total = packet.progress?.total || 0;
+  const pct = progressPct(packet);
+  const voteSummary =
+    packet.votes?.length != null
+      ? ` · ${packet.votes.filter((v) => v.vote).length}/${packet.votes.length} votes`
+      : "";
+  return `${completed}/${total} (${pct}%)${voteSummary}`;
 }
 
 function formatWhen(iso) {
@@ -161,6 +195,11 @@ function render() {
     bind();
     return;
   }
+  if (state.view === "checklist") {
+    app.innerHTML = shell(renderChecklistAdmin());
+    bind();
+    return;
+  }
   if (state.view === "detail") {
     const packet = currentPacket();
     app.innerHTML = shell(packet ? renderDetail(packet) : `<div class="empty">Packet not found.</div>`);
@@ -191,6 +230,63 @@ function renderPasswordForm(forced) {
   `;
 }
 
+function filteredSortedPackets() {
+  const q = state.nameQuery.trim().toLowerCase();
+  let packets = state.packets.filter((p) => {
+    if (state.filter !== "all" && p.status !== state.filter) return false;
+    if (state.specialtyFilter !== "all" && p.specialty !== state.specialtyFilter) return false;
+    if (progressPct(p) < Number(state.minPct || 0)) return false;
+    if (q && !String(p.providerName || "").toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  const dir = state.sortDir === "asc" ? 1 : -1;
+  const statusOrder = {
+    in_progress: 1,
+    ready_for_review: 2,
+    query_pending: 3,
+    approved: 4,
+    denied: 5,
+  };
+
+  packets = packets.slice().sort((a, b) => {
+    let av;
+    let bv;
+    switch (state.sortBy) {
+      case "name":
+        av = (a.providerName || "").toLowerCase();
+        bv = (b.providerName || "").toLowerCase();
+        break;
+      case "specialty":
+        av = (a.specialtyLabel || a.specialty || "").toLowerCase();
+        bv = (b.specialtyLabel || b.specialty || "").toLowerCase();
+        break;
+      case "pct":
+        av = progressPct(a);
+        bv = progressPct(b);
+        break;
+      case "status":
+        av = statusOrder[a.status] || 99;
+        bv = statusOrder[b.status] || 99;
+        break;
+      case "createdAt":
+        av = a.createdAt || "";
+        bv = b.createdAt || "";
+        break;
+      case "updatedAt":
+      default:
+        av = a.updatedAt || "";
+        bv = b.updatedAt || "";
+        break;
+    }
+    if (av < bv) return -1 * dir;
+    if (av > bv) return 1 * dir;
+    return 0;
+  });
+
+  return packets;
+}
+
 function renderList() {
   const filters = [
     ["all", "All"],
@@ -201,11 +297,9 @@ function renderList() {
     ["denied", "Denied"],
   ];
 
-  const packets = state.packets.filter(
-    (p) => state.filter === "all" || p.status === state.filter
-  );
-
+  const packets = filteredSortedPackets();
   const readyCount = state.packets.filter((p) => p.status === "ready_for_review").length;
+  const specialties = state.meta?.specialties || {};
 
   return `
     <div class="page-head">
@@ -213,11 +307,14 @@ function renderList() {
         <h2>Credentialing packets</h2>
         <p>Track application components and governing board votes.</p>
       </div>
-      ${
-        state.user.role === "admin"
-          ? `<button class="btn primary" data-action="new-packet">New packet</button>`
-          : ""
-      }
+      <div class="btn-row">
+        ${
+          state.user.role === "admin"
+            ? `<button class="btn ghost" data-action="open-checklist-admin">Checklist items</button>
+               <button class="btn primary" data-action="new-packet">New packet</button>`
+            : ""
+        }
+      </div>
     </div>
     ${
       readyCount && state.user.role === "board"
@@ -232,11 +329,51 @@ function renderList() {
         )
         .join("")}
     </div>
+    <div class="list-controls">
+      <label class="ctl">
+        <span>Provider name</span>
+        <input type="search" id="filter-name" value="${esc(state.nameQuery)}" placeholder="Search name…">
+      </label>
+      <label class="ctl">
+        <span>Specialty</span>
+        <select id="filter-specialty">
+          <option value="all">All specialties</option>
+          ${Object.entries(specialties)
+            .map(
+              ([k, v]) =>
+                `<option value="${esc(k)}" ${state.specialtyFilter === k ? "selected" : ""}>${esc(v)}</option>`
+            )
+            .join("")}
+        </select>
+      </label>
+      <label class="ctl">
+        <span>Min % complete</span>
+        <input type="number" id="filter-min-pct" min="0" max="100" step="1" value="${esc(state.minPct)}">
+      </label>
+      <label class="ctl">
+        <span>Sort by</span>
+        <select id="sort-by">
+          <option value="name" ${state.sortBy === "name" ? "selected" : ""}>Provider name</option>
+          <option value="specialty" ${state.sortBy === "specialty" ? "selected" : ""}>Specialty</option>
+          <option value="pct" ${state.sortBy === "pct" ? "selected" : ""}>% Completed</option>
+          <option value="status" ${state.sortBy === "status" ? "selected" : ""}>Status</option>
+          <option value="updatedAt" ${state.sortBy === "updatedAt" ? "selected" : ""}>Date of last activity</option>
+          <option value="createdAt" ${state.sortBy === "createdAt" ? "selected" : ""}>Date of creation</option>
+        </select>
+      </label>
+      <label class="ctl">
+        <span>Direction</span>
+        <select id="sort-dir">
+          <option value="asc" ${state.sortDir === "asc" ? "selected" : ""}>Ascending</option>
+          <option value="desc" ${state.sortDir === "desc" ? "selected" : ""}>Descending</option>
+        </select>
+      </label>
+    </div>
     <div class="packet-grid">
       ${
         packets.length
           ? packets.map(renderPacketCard).join("")
-          : `<div class="empty">No packets in this view yet.</div>`
+          : `<div class="empty">No packets match these filters.</div>`
       }
     </div>
   `;
@@ -244,10 +381,7 @@ function renderList() {
 
 function renderPacketCard(p) {
   const pct = progressPct(p);
-  const voteSummary =
-    p.votes?.filter((v) => v.vote).length != null
-      ? `${p.votes.filter((v) => v.vote).length}/${p.votes.length} votes`
-      : "";
+  const color = progressColor(pct);
   return `
     <article class="packet-card" data-action="open-packet" data-id="${esc(p.id)}" tabindex="0" role="button">
       <div class="packet-card-top">
@@ -255,10 +389,10 @@ function renderPacketCard(p) {
           <h3>${esc(p.providerName)}</h3>
           <div class="meta">${esc(p.specialtyLabel)} · ${p.credentialingType === "new" ? "New credentialing" : "Recredentialing"}</div>
         </div>
-        ${statusBadge(p.status)}
+        ${statusBadge(p.status, pct)}
       </div>
-      <div class="progress-bar" aria-hidden="true"><span style="width:${pct}%"></span></div>
-      <div class="progress-label">${p.progress?.completed || 0} of ${p.progress?.total || 0} components complete${voteSummary ? ` · ${voteSummary}` : ""}</div>
+      <div class="progress-bar" aria-hidden="true"><span style="width:${pct}%;background:${color}"></span></div>
+      <div class="progress-label">${esc(progressLabel(p))}</div>
     </article>
   `;
 }
@@ -288,7 +422,7 @@ function renderDetail(p) {
   return `
     <button class="btn ghost sm detail-back" data-action="back">← All packets</button>
     <section class="detail-hero">
-      <div>${statusBadge(p.status)}</div>
+      <div>${statusBadge(p.status, progressPct(p))}</div>
       <div class="detail-title-row">
         <h2>${esc(p.providerName)}</h2>
         <button type="button" class="activity-link" data-action="open-activity">Activity log</button>
@@ -302,6 +436,8 @@ function renderDetail(p) {
           .map((b) => `<span class="pill">${esc(b)}</span>`)
           .join("")}
       </div>
+      <div class="progress-bar detail-progress" aria-hidden="true"><span style="width:${progressPct(p)}%;background:${progressColor(progressPct(p))}"></span></div>
+      <div class="progress-label">${esc(progressLabel(p))}</div>
       ${
         p.notes
           ? `<p style="margin:14px 0 0;color:var(--muted)">${esc(p.notes)}</p>`
@@ -342,7 +478,7 @@ function renderDetail(p) {
     }
 
     <section class="section">
-      <div class="section-h"><span>Application components</span><span>${p.progress?.completed || 0}/${p.progress?.total || 0}</span></div>
+      <div class="section-h"><span>Application components</span><span>${p.progress?.completed || 0}/${p.progress?.total || 0} (${progressPct(p)}%)</span></div>
       <div class="section-b check-list">
         ${(p.items || [])
           .map((item) => {
@@ -350,6 +486,11 @@ function renderDetail(p) {
               <div class="check-row">
                 <div>
                   <div class="label">${esc(item.label)}</div>
+                  ${
+                    item.sourceScope && item.sourceScope !== "global"
+                      ? `<div class="notes">${item.sourceScope === "specialty" ? "Specialty item" : "Provider-specific item"}</div>`
+                      : ""
+                  }
                 </div>
                 <div class="item-status" data-item-id="${esc(item.id)}">
                   ${
@@ -369,6 +510,13 @@ function renderDetail(p) {
             `;
           })
           .join("")}
+        ${
+          state.user.role === "admin" && canEditItems
+            ? `<div class="btn-row" style="margin-top:4px">
+                <button class="btn ghost sm" data-action="add-packet-item">Add item for this provider</button>
+              </div>`
+            : ""
+        }
       </div>
     </section>
 
@@ -509,11 +657,117 @@ function renderVoteCard(packet, vote, canVote) {
             <div class="btn-row">
               <button class="btn primary sm" data-action="vote" data-vote="yes">Yes</button>
               <button class="btn danger sm" data-action="vote" data-vote="no">No</button>
-              <button class="btn ghost sm" data-action="vote" data-vote="pause_for_query">Pause for Query</button>
+              <button class="btn warn sm" data-action="vote" data-vote="pause_for_query">Pause for Query</button>
             </div>
           `
           : ""
       }
+    </div>
+  `;
+}
+
+function renderChecklistAdmin() {
+  const defs = state.checklistDefs || [];
+  const globalNew = defs.filter((d) => d.scope === "global" && (d.credentialingType === "new" || d.credentialingType === "both"));
+  const globalRecred = defs.filter((d) => d.scope === "global" && (d.credentialingType === "recred" || d.credentialingType === "both"));
+  const specialty = defs.filter((d) => d.scope === "specialty");
+  const packet = defs.filter((d) => d.scope === "packet");
+
+  const row = (d) => `
+    <div class="check-row template-row">
+      <div>
+        <div class="label">${esc(d.label)}</div>
+        <div class="notes">
+          ${d.scope === "global" ? `Global · ${d.credentialingType}` : ""}
+          ${d.scope === "specialty" ? `Specialty · ${esc(d.specialtyLabel || d.specialty)} · ${d.credentialingType}` : ""}
+          ${d.scope === "packet" ? `Provider packet · ${esc(d.packetId)}` : ""}
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn danger sm" data-action="delete-checklist-def" data-id="${esc(d.id)}">Remove</button>
+      </div>
+    </div>`;
+
+  return `
+    <button class="btn ghost sm detail-back" data-action="back">← All packets</button>
+    <div class="page-head">
+      <div>
+        <h2>Checklist items</h2>
+        <p>Manage required components for all packets, one specialty, or a single provider.</p>
+      </div>
+      <button class="btn primary" data-action="new-checklist-def">Add checklist item</button>
+    </div>
+    <section class="section">
+      <div class="section-h"><span>Global — new credentialing</span><span>${globalNew.length}</span></div>
+      <div class="section-b check-list">${globalNew.length ? globalNew.map(row).join("") : `<div class="empty">No global new-credentialing items.</div>`}</div>
+    </section>
+    <section class="section">
+      <div class="section-h slate"><span>Global — recredentialing</span><span>${globalRecred.length}</span></div>
+      <div class="section-b check-list">${globalRecred.length ? globalRecred.map(row).join("") : `<div class="empty">No global recredentialing items.</div>`}</div>
+    </section>
+    <section class="section">
+      <div class="section-h amber"><span>Specialty-specific</span><span>${specialty.length}</span></div>
+      <div class="section-b check-list">${specialty.length ? specialty.map(row).join("") : `<div class="empty">No specialty-specific items yet.</div>`}</div>
+    </section>
+    <section class="section">
+      <div class="section-h"><span>Provider-specific</span><span>${packet.length}</span></div>
+      <div class="section-b check-list">${packet.length ? packet.map(row).join("") : `<div class="empty">No provider-only items. Add them from a packet detail page.</div>`}</div>
+    </section>
+  `;
+}
+
+function modalChecklistDef(defaults = {}) {
+  const specialties = state.meta?.specialties || {};
+  const packets = state.packets || [];
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <form class="modal" id="checklist-def-form" data-stop>
+        <h3>Add checklist item</h3>
+        <p style="margin:0;color:var(--muted)">Choose whether this requirement applies to everyone, one specialty, or one provider.</p>
+        <label class="fld"><span>Item label</span>
+          <input name="label" required placeholder="Disclosure Response" value="${esc(defaults.label || "")}">
+        </label>
+        <label class="fld"><span>Applies to</span>
+          <select name="scope" id="cdef-scope" required>
+            <option value="global" ${defaults.scope === "global" || !defaults.scope ? "selected" : ""}>All packets (global)</option>
+            <option value="specialty" ${defaults.scope === "specialty" ? "selected" : ""}>One specialty</option>
+            <option value="packet" ${defaults.scope === "packet" ? "selected" : ""}>One provider / packet</option>
+          </select>
+        </label>
+        <label class="fld" id="cdef-type-wrap"><span>Credentialing type</span>
+          <select name="credentialingType">
+            <option value="both">New and recredentialing</option>
+            <option value="new">New credentialing only</option>
+            <option value="recred">Recredentialing only</option>
+          </select>
+        </label>
+        <label class="fld" id="cdef-specialty-wrap" hidden><span>Specialty</span>
+          <select name="specialty">
+            ${Object.entries(specialties)
+              .map(([k, v]) => `<option value="${esc(k)}" ${defaults.specialty === k ? "selected" : ""}>${esc(v)}</option>`)
+              .join("")}
+          </select>
+        </label>
+        <label class="fld" id="cdef-packet-wrap" hidden><span>Provider packet</span>
+          <select name="packetId">
+            ${packets
+              .map(
+                (p) =>
+                  `<option value="${esc(p.id)}" ${defaults.packetId === p.id ? "selected" : ""}>${esc(p.providerName)} (${esc(p.specialtyLabel)})</option>`
+              )
+              .join("")}
+          </select>
+        </label>
+        <label class="fld checkbox-row">
+          <input type="checkbox" name="applyToExisting" checked>
+          <span>Also add to matching existing open packets</span>
+        </label>
+        <p class="form-error" id="cdef-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" data-action="close-modal">Cancel</button>
+          <button type="submit" class="btn primary">Save item</button>
+        </div>
+      </form>
     </div>
   `;
 }
@@ -705,6 +959,73 @@ function bind() {
     });
   }
 
+  const cdef = document.getElementById("checklist-def-form");
+  if (cdef) {
+    const syncScope = () => {
+      const scope = document.getElementById("cdef-scope").value;
+      document.getElementById("cdef-specialty-wrap").hidden = scope !== "specialty";
+      document.getElementById("cdef-packet-wrap").hidden = scope !== "packet";
+      document.getElementById("cdef-type-wrap").hidden = scope === "packet";
+    };
+    syncScope();
+    document.getElementById("cdef-scope").addEventListener("change", syncScope);
+    cdef.addEventListener("click", (e) => e.stopPropagation());
+    cdef.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(cdef);
+      const err = document.getElementById("cdef-error");
+      const scope = String(fd.get("scope"));
+      try {
+        await api("/api/checklist-defs", {
+          method: "POST",
+          body: JSON.stringify({
+            label: fd.get("label"),
+            scope,
+            credentialingType: scope === "packet" ? "both" : fd.get("credentialingType"),
+            specialty: scope === "specialty" ? fd.get("specialty") : null,
+            packetId: scope === "packet" ? fd.get("packetId") : null,
+            applyToExisting: fd.get("applyToExisting") === "on",
+          }),
+        });
+        state.modal = null;
+        await refreshPackets();
+        if (state.view === "checklist") {
+          const data = await api("/api/checklist-defs");
+          state.checklistDefs = data.defs || [];
+        }
+        render();
+      } catch (ex) {
+        err.textContent = ex.message;
+        err.hidden = false;
+      }
+    });
+  }
+
+  const nameInput = document.getElementById("filter-name");
+  if (nameInput) {
+    nameInput.addEventListener("input", () => {
+      state.nameQuery = nameInput.value;
+      render();
+      const el = document.getElementById("filter-name");
+      if (el) {
+        el.focus();
+        const len = el.value.length;
+        el.setSelectionRange(len, len);
+      }
+    });
+  }
+  ["filter-specialty", "filter-min-pct", "sort-by", "sort-dir"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("change", () => {
+      if (id === "filter-specialty") state.specialtyFilter = el.value;
+      if (id === "filter-min-pct") state.minPct = Math.max(0, Math.min(100, Number(el.value) || 0));
+      if (id === "sort-by") state.sortBy = el.value;
+      if (id === "sort-dir") state.sortDir = el.value;
+      render();
+    });
+  });
+
   const pause = document.getElementById("pause-form");
   if (pause) {
     pause.addEventListener("click", (e) => e.stopPropagation());
@@ -812,6 +1133,38 @@ async function onAction(e) {
 
   if (action === "new-packet") {
     state.modal = modalNewPacket();
+    render();
+    return;
+  }
+
+  if (action === "open-checklist-admin") {
+    state.view = "checklist";
+    state.modal = null;
+    const data = await api("/api/checklist-defs");
+    state.checklistDefs = data.defs || [];
+    render();
+    return;
+  }
+
+  if (action === "new-checklist-def") {
+    state.modal = modalChecklistDef();
+    render();
+    return;
+  }
+
+  if (action === "add-packet-item") {
+    state.modal = modalChecklistDef({ scope: "packet", packetId: state.packetId });
+    render();
+    return;
+  }
+
+  if (action === "delete-checklist-def") {
+    const id = el.getAttribute("data-id");
+    if (!confirm("Remove this checklist item from templates (and from packets that received it from this template)?")) return;
+    await api(`/api/checklist-defs/${id}`, { method: "DELETE" });
+    await refreshPackets();
+    const data = await api("/api/checklist-defs");
+    state.checklistDefs = data.defs || [];
     render();
     return;
   }
