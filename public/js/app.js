@@ -38,6 +38,7 @@ let state = {
   view: "list", // list | detail | password
   packetId: null,
   modal: null,
+  activity: null, // { loading, error, events } when activity modal open
 };
 
 const app = document.getElementById("app");
@@ -76,6 +77,31 @@ function progressPct(packet) {
   if (!packet.progress || !packet.progress.total) return 0;
   return Math.round((packet.progress.completed / packet.progress.total) * 100);
 }
+
+function formatWhen(iso) {
+  if (!iso) return "";
+  const raw = /Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : `${iso.replace(" ", "T")}Z`;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+const EVENT_TYPE_LABELS = {
+  packet_created: "Created",
+  packet_updated: "Updated",
+  item_status_changed: "Checklist",
+  marked_ready: "Ready",
+  vote_cast: "Vote",
+  query_opened: "Query",
+  query_resolved: "Response",
+  status_changed: "Status",
+};
 
 async function bootstrap() {
   try {
@@ -252,12 +278,21 @@ function renderDetail(p) {
   const openQueries = (p.votes || []).filter(
     (v) => v.vote === "pause_for_query" && !v.queryResolution
   );
+  const resolvedQueries = (p.votes || []).filter(
+    (v) => v.vote === "pause_for_query" && v.queryResolution
+  );
+  const allQueriesResolved =
+    openQueries.length === 0 &&
+    (p.votes || []).some((v) => v.vote === "pause_for_query" && v.queryResolution);
 
   return `
     <button class="btn ghost sm detail-back" data-action="back">← All packets</button>
     <section class="detail-hero">
       <div>${statusBadge(p.status)}</div>
-      <h2>${esc(p.providerName)}</h2>
+      <div class="detail-title-row">
+        <h2>${esc(p.providerName)}</h2>
+        <button type="button" class="activity-link" data-action="open-activity">Activity log</button>
+      </div>
       <div class="meta">${esc(p.specialtyLabel)} · ${
         p.credentialingType === "new" ? "New credentialing" : "Recredentialing"
       }</div>
@@ -274,13 +309,22 @@ function renderDetail(p) {
       }
       <div class="btn-row" style="margin-top:16px">
         ${
-          canMarkReady
-            ? `<button class="btn primary" data-action="mark-ready">Mark ready for review</button>`
+          canMarkReady && openQueries.length === 0
+            ? `<button class="btn primary" data-action="mark-ready">${
+                p.status === "query_pending"
+                  ? "Return to Ready for Review"
+                  : "Mark ready for review"
+              }</button>`
             : ""
         }
         ${
           state.user.role === "admin" && p.status === "in_progress" && !p.progress?.allDone
             ? `<span class="progress-label">Complete or mark N/A on every component before review.</span>`
+            : ""
+        }
+        ${
+          state.user.role === "admin" && p.status === "query_pending" && openQueries.length
+            ? `<span class="progress-label">Respond to each open query below, then return the packet to review.</span>`
             : ""
         }
         ${
@@ -290,6 +334,12 @@ function renderDetail(p) {
         }
       </div>
     </section>
+
+    ${
+      openQueries.length || resolvedQueries.length
+        ? renderQueryPanel(p, openQueries, resolvedQueries, allQueriesResolved)
+        : ""
+    }
 
     <section class="section">
       <div class="section-h"><span>Application components</span><span>${p.progress?.completed || 0}/${p.progress?.total || 0}</span></div>
@@ -330,11 +380,6 @@ function renderDetail(p) {
             ? `<div class="banner warn">Board voting unlocks when the packet is marked <strong>Ready for Review</strong>.</div>`
             : ""
         }
-        ${
-          openQueries.length && state.user.role === "admin"
-            ? `<div class="banner warn">${openQueries.length} open quer${openQueries.length === 1 ? "y" : "ies"} need a written resolution before returning the packet to review.</div>`
-            : ""
-        }
         <div class="vote-grid">
           ${(p.votes || []).map((v) => renderVoteCard(p, v, canVote)).join("")}
         </div>
@@ -343,9 +388,100 @@ function renderDetail(p) {
   `;
 }
 
+function renderQueryPanel(packet, openQueries, resolvedQueries, allQueriesResolved) {
+  const isAdmin = state.user.role === "admin";
+  return `
+    <section class="section query-section">
+      <div class="section-h amber"><span>Queries &amp; holds</span><span>${openQueries.length} open</span></div>
+      <div class="section-b">
+        ${
+          openQueries.length
+            ? `<div class="banner warn">A governing board member paused this packet. ${
+                isAdmin
+                  ? "Post a written response for each concern, then return the packet to Ready for Review."
+                  : "Credentialing staff will post a written response."
+              }</div>`
+            : allQueriesResolved
+              ? `<div class="banner info">All open queries have a written response.${
+                  isAdmin && packet.status === "query_pending"
+                    ? " You can return the packet to Ready for Review for a re-vote."
+                    : ""
+                }</div>`
+              : ""
+        }
+        <div class="query-list">
+          ${openQueries.map((v) => renderOpenQueryCard(v, isAdmin)).join("")}
+          ${resolvedQueries.map((v) => renderResolvedQueryCard(v)).join("")}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderOpenQueryCard(vote, isAdmin) {
+  return `
+    <article class="query-card open" id="query-${esc(vote.id)}">
+      <div class="query-card-head">
+        <div>
+          <strong>${esc(vote.voterName)}</strong>
+          <span class="vote-choice pause_for_query">Pause for Query</span>
+        </div>
+        ${vote.votedAt ? `<time datetime="${esc(vote.votedAt)}">${esc(formatWhen(vote.votedAt))}</time>` : ""}
+      </div>
+      <div class="concern-box">
+        <strong>Board concern</strong>
+        <p>${esc(vote.concern)}</p>
+      </div>
+      ${
+        isAdmin
+          ? `
+            <form class="query-response-form" data-vote-id="${esc(vote.id)}">
+              <label class="fld">
+                <span>Staff response</span>
+                <textarea name="queryResolution" required rows="3" placeholder="Explain how the concern was addressed, what was uploaded, or the clarification provided…"></textarea>
+              </label>
+              <p class="form-error" hidden></p>
+              <div class="btn-row">
+                <button type="submit" class="btn primary sm">Post response</button>
+              </div>
+            </form>
+          `
+          : `<p class="progress-label">Awaiting credentialing staff response.</p>`
+      }
+    </article>
+  `;
+}
+
+function renderResolvedQueryCard(vote) {
+  return `
+    <article class="query-card resolved">
+      <div class="query-card-head">
+        <div>
+          <strong>${esc(vote.voterName)}</strong>
+          <span class="pill">Resolved</span>
+        </div>
+        ${
+          vote.resolutionAt
+            ? `<time datetime="${esc(vote.resolutionAt)}">${esc(formatWhen(vote.resolutionAt))}</time>`
+            : ""
+        }
+      </div>
+      <div class="concern-box">
+        <strong>Board concern</strong>
+        <p>${esc(vote.concern)}</p>
+      </div>
+      <div class="resolution-box">
+        <strong>Staff response</strong>
+        <p>${esc(vote.queryResolution)}</p>
+      </div>
+    </article>
+  `;
+}
+
 function renderVoteCard(packet, vote, canVote) {
   const isMine = vote.voterUserId === state.user.id;
   const choice = vote.vote || "none";
+  const isOpenQuery = vote.vote === "pause_for_query" && !vote.queryResolution;
   return `
     <div class="vote-card ${isMine ? "mine" : ""}">
       <div class="vote-head">
@@ -353,8 +489,13 @@ function renderVoteCard(packet, vote, canVote) {
         <span class="vote-choice ${choice}">${esc(VOTE_LABELS[choice])}</span>
       </div>
       ${
-        vote.concern
+        vote.concern && !isOpenQuery
           ? `<div class="concern-box"><strong>Query / concern</strong><br>${esc(vote.concern)}</div>`
+          : ""
+      }
+      ${
+        isOpenQuery
+          ? `<div class="concern-box"><strong>Open query</strong><br>${esc(vote.concern)}<div style="margin-top:8px"><a href="#query-${esc(vote.id)}">Jump to response</a></div></div>`
           : ""
       }
       ${
@@ -371,13 +512,6 @@ function renderVoteCard(packet, vote, canVote) {
               <button class="btn ghost sm" data-action="vote" data-vote="pause_for_query">Pause for Query</button>
             </div>
           `
-          : ""
-      }
-      ${
-        state.user.role === "admin" &&
-        vote.vote === "pause_for_query" &&
-        !vote.queryResolution
-          ? `<button class="btn ghost sm" data-action="resolve-query" data-vote-id="${esc(vote.id)}">Record query resolution</button>`
           : ""
       }
     </div>
@@ -447,19 +581,43 @@ function modalPauseQuery() {
   `;
 }
 
-function modalResolve(voteId) {
+function modalActivity(packet) {
+  const activity = state.activity;
+  let body = `<div class="empty">Loading activity…</div>`;
+  if (activity?.error) {
+    body = `<div class="banner warn">${esc(activity.error)}</div>`;
+  } else if (activity && !activity.loading) {
+    const events = activity.events || [];
+    body = events.length
+      ? `<ol class="activity-timeline">${events
+          .map(
+            (ev) => `
+          <li class="activity-item type-${esc(ev.eventType)}">
+            <div class="activity-meta">
+              <span class="activity-type">${esc(EVENT_TYPE_LABELS[ev.eventType] || ev.eventType)}</span>
+              <time datetime="${esc(ev.createdAt)}">${esc(formatWhen(ev.createdAt))}</time>
+            </div>
+            <div class="activity-summary">${esc(ev.summary)}</div>
+            <div class="activity-actor">by ${esc(ev.actorName)}</div>
+            ${ev.detail ? `<div class="activity-detail">${esc(ev.detail)}</div>` : ""}
+          </li>`
+          )
+          .join("")}</ol>`
+      : `<div class="empty">No activity recorded for this packet yet.</div>`;
+  }
+
   return `
     <div class="modal-backdrop" data-action="close-modal">
-      <form class="modal" id="resolve-form" data-vote-id="${esc(voteId)}" data-stop>
-        <h3>Query resolution</h3>
-        <p style="margin:0;color:var(--muted)">Explain how the queried concerns were addressed or corrected.</p>
-        <label class="fld"><span>Resolution</span><textarea name="queryResolution" required placeholder="Describe the correction, attached documents, or clarification provided…"></textarea></label>
-        <p class="form-error" id="resolve-error" hidden></p>
-        <div class="modal-actions">
-          <button type="button" class="btn ghost" data-action="close-modal">Cancel</button>
-          <button type="submit" class="btn primary">Save resolution</button>
+      <div class="modal modal-wide" data-stop id="activity-modal">
+        <div class="modal-title-row">
+          <div>
+            <h3>Activity log</h3>
+            <p style="margin:4px 0 0;color:var(--muted)">${esc(packet.providerName)} — who changed what, and when</p>
+          </div>
+          <button type="button" class="btn ghost sm" data-action="close-modal">Close</button>
         </div>
-      </form>
+        ${body}
+      </div>
     </div>
   `;
 }
@@ -565,28 +723,32 @@ function bind() {
     });
   }
 
-  const resolve = document.getElementById("resolve-form");
-  if (resolve) {
-    resolve.addEventListener("click", (e) => e.stopPropagation());
-    resolve.addEventListener("submit", async (e) => {
+  const activityModal = document.getElementById("activity-modal");
+  if (activityModal) {
+    activityModal.addEventListener("click", (e) => e.stopPropagation());
+  }
+
+  document.querySelectorAll(".query-response-form").forEach((form) => {
+    form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const fd = new FormData(resolve);
-      const err = document.getElementById("resolve-error");
-      const voteId = resolve.getAttribute("data-vote-id");
+      const voteId = form.getAttribute("data-vote-id");
+      const fd = new FormData(form);
+      const err = form.querySelector(".form-error");
       try {
         const data = await api(`/api/packets/${state.packetId}/votes/${voteId}/resolve`, {
           method: "POST",
           body: JSON.stringify({ queryResolution: fd.get("queryResolution") }),
         });
         replacePacket(data.packet);
-        state.modal = null;
         render();
       } catch (ex) {
-        err.textContent = ex.message;
-        err.hidden = false;
+        if (err) {
+          err.textContent = ex.message;
+          err.hidden = false;
+        }
       }
     });
-  }
+  });
 }
 
 function replacePacket(packet) {
@@ -657,7 +819,27 @@ async function onAction(e) {
   if (action === "close-modal") {
     if (e.target !== el && el.classList.contains("modal-backdrop")) return;
     state.modal = null;
+    state.activity = null;
     render();
+    return;
+  }
+
+  if (action === "open-activity") {
+    const packet = currentPacket();
+    if (!packet) return;
+    state.activity = { loading: true, events: [], error: null };
+    state.modal = modalActivity(packet);
+    render();
+    try {
+      const data = await api(`/api/packets/${packet.id}/activity`);
+      state.activity = { loading: false, events: data.activity || [], error: null };
+      state.modal = modalActivity(packet);
+      render();
+    } catch (ex) {
+      state.activity = { loading: false, events: [], error: ex.message };
+      state.modal = modalActivity(packet);
+      render();
+    }
     return;
   }
 
@@ -690,12 +872,6 @@ async function onAction(e) {
     }
     if (!confirm(`Record your vote as “${VOTE_LABELS[vote]}”?`)) return;
     await castVote(vote);
-    render();
-    return;
-  }
-
-  if (action === "resolve-query") {
-    state.modal = modalResolve(el.getAttribute("data-vote-id"));
     render();
     return;
   }
