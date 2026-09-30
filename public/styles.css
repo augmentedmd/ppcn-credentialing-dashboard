@@ -193,13 +193,15 @@ button, input, select, textarea {
 }
 
 .btn.warn {
-  background: #f5c518;
-  color: #5c4800;
-  border-color: #e0b000;
+  background: #fdf6e7;
+  color: #9a6b12;
+  border-color: #f0e0b8;
 }
 
 .btn.warn:hover:not(:disabled) {
-  background: #e8b80f;
+  background: #f8edcf;
+  border-color: #e5d09a;
+  color: #7a5a12;
 }
 
 .btn.sm { padding: 7px 12px; font-size: 0.88rem; }
