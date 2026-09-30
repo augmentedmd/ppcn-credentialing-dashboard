@@ -10,6 +10,8 @@
     "db:migrate:remote": "wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0001_init.sql",
     "db:seed:local": "wrangler d1 execute ppcn-credentialing --local --file=./migrations/0002_seed.sql",
     "db:seed:remote": "wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0002_seed.sql",
+    "db:demo:local": "wrangler d1 execute ppcn-credentialing --local --file=./migrations/0003_demo_packets.sql",
+    "db:demo:remote": "wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0003_demo_packets.sql",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
