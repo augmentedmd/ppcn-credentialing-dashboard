@@ -11,7 +11,7 @@ not_found_handling = "single-page-application"
 [[d1_databases]]
 binding = "DB"
 database_name = "ppcn-credentialing"
-database_id = "local-dev-ppcn-credentialing"
+database_id = "bf78864d-b321-4310-8dd5-081ed40f7dfc"
 migrations_dir = "migrations"
 
 [vars]
