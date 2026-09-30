@@ -11,10 +11,16 @@ import {
 import {
   BOARD_MEMBER_IDS,
   SPECIALTIES,
-  checklistFor,
+  applyDefToMatchingPackets,
+  listChecklistDefs,
+  makeItemKey,
+  mapChecklistDef,
   newId,
+  resolveChecklistForPacket,
 } from "./checklist";
 import type {
+  ChecklistDefRow,
+  ChecklistScope,
   Env,
   ItemStatus,
   PacketEventRow,
@@ -130,6 +136,8 @@ function mapItem(row: PacketItemRow) {
     status: row.status,
     notes: row.notes,
     updatedAt: row.updated_at,
+    sourceScope: row.source_scope || "global",
+    sourceDefId: row.source_def_id || null,
   };
 }
 
@@ -321,6 +329,164 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     });
   }
 
+  // ---- Checklist templates (admin) ----
+  if (method === "GET" && path === "/api/checklist-defs") {
+    const auth = await requireAuth(env, request);
+    if (auth instanceof Response) return auth;
+    const scope = url.searchParams.get("scope") as ChecklistScope | null;
+    const specialty = url.searchParams.get("specialty") || undefined;
+    const packetId = url.searchParams.get("packetId") || undefined;
+    const defs = await listChecklistDefs(env, {
+      scope: scope || undefined,
+      specialty,
+      packetId,
+    });
+    return json({ defs });
+  }
+
+  if (method === "POST" && path === "/api/checklist-defs") {
+    const auth = await requireAdmin(env, request);
+    if (auth instanceof Response) return auth;
+
+    const body = (await request.json().catch(() => null)) as {
+      label?: string;
+      key?: string;
+      scope?: ChecklistScope;
+      credentialingType?: "new" | "recred" | "both";
+      specialty?: string | null;
+      packetId?: string | null;
+      sortOrder?: number;
+      applyToExisting?: boolean;
+    } | null;
+
+    if (!body) return error("Request body is required");
+    const label = body.label?.trim();
+    if (!label) return error("Item label is required");
+    const scope = body.scope || "global";
+    if (!["global", "specialty", "packet"].includes(scope)) {
+      return error("Scope must be global, specialty, or packet");
+    }
+    const credentialingType = body.credentialingType || "both";
+    if (!["new", "recred", "both"].includes(credentialingType)) {
+      return error("credentialingType must be new, recred, or both");
+    }
+    if (scope === "specialty" && (!body.specialty || !SPECIALTIES[body.specialty])) {
+      return error("Valid specialty is required for specialty-scoped items");
+    }
+    if (scope === "packet") {
+      if (!body.packetId) return error("packetId is required for provider-specific items");
+      const pkt = await env.DB.prepare(`SELECT id FROM packets WHERE id = ?`)
+        .bind(body.packetId)
+        .first();
+      if (!pkt) return error("Packet not found", 404);
+    }
+
+    const itemKey = (body.key?.trim() || makeItemKey(label)).slice(0, 64);
+    const defId = newId("cdef");
+    const sortOrder =
+      typeof body.sortOrder === "number"
+        ? body.sortOrder
+        : (
+            await env.DB.prepare(
+              `SELECT COALESCE(MAX(sort_order), 0) AS m FROM checklist_defs WHERE scope = ?`
+            )
+              .bind(scope)
+              .first<{ m: number }>()
+          )?.m || 0;
+
+    await env.DB.prepare(
+      `INSERT INTO checklist_defs
+        (id, item_key, label, scope, credentialing_type, specialty, packet_id, sort_order, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`
+    )
+      .bind(
+        defId,
+        itemKey,
+        label,
+        scope,
+        credentialingType,
+        scope === "specialty" ? body.specialty! : null,
+        scope === "packet" ? body.packetId! : null,
+        sortOrder + 1
+      )
+      .run();
+
+    const def = await env.DB.prepare(`SELECT * FROM checklist_defs WHERE id = ?`)
+      .bind(defId)
+      .first<ChecklistDefRow>();
+    if (!def) return error("Failed to create checklist item", 500);
+
+    let applied = 0;
+    if (body.applyToExisting !== false) {
+      applied = await applyDefToMatchingPackets(env, def);
+    }
+
+    return json({ def: mapChecklistDef(def), appliedToPackets: applied }, { status: 201 });
+  }
+
+  const checklistDefMatch = path.match(/^\/api\/checklist-defs\/([^/]+)$/);
+  if (checklistDefMatch) {
+    const defId = decodeURIComponent(checklistDefMatch[1]);
+
+    if (method === "PATCH") {
+      const auth = await requireAdmin(env, request);
+      if (auth instanceof Response) return auth;
+      const existing = await env.DB.prepare(`SELECT * FROM checklist_defs WHERE id = ?`)
+        .bind(defId)
+        .first<ChecklistDefRow>();
+      if (!existing || !existing.active) return error("Checklist item not found", 404);
+
+      const body = (await request.json().catch(() => null)) as {
+        label?: string;
+        sortOrder?: number;
+      } | null;
+
+      const nextLabel = body?.label?.trim() || existing.label;
+      const nextSort =
+        typeof body?.sortOrder === "number" ? body.sortOrder : existing.sort_order;
+
+      await env.DB.prepare(
+        `UPDATE checklist_defs SET label = ?, sort_order = ? WHERE id = ?`
+      )
+        .bind(nextLabel, nextSort, defId)
+        .run();
+
+      if (nextLabel !== existing.label) {
+        await env.DB.prepare(
+          `UPDATE packet_items SET label = ? WHERE source_def_id = ?`
+        )
+          .bind(nextLabel, defId)
+          .run();
+      }
+
+      const updated = await env.DB.prepare(`SELECT * FROM checklist_defs WHERE id = ?`)
+        .bind(defId)
+        .first<ChecklistDefRow>();
+      return json({ def: mapChecklistDef(updated!) });
+    }
+
+    if (method === "DELETE") {
+      const auth = await requireAdmin(env, request);
+      if (auth instanceof Response) return auth;
+      const existing = await env.DB.prepare(`SELECT * FROM checklist_defs WHERE id = ?`)
+        .bind(defId)
+        .first<ChecklistDefRow>();
+      if (!existing) return error("Checklist item not found", 404);
+
+      await env.DB.prepare(`UPDATE checklist_defs SET active = 0 WHERE id = ?`)
+        .bind(defId)
+        .run();
+
+      const removed = await env.DB.prepare(
+        `DELETE FROM packet_items WHERE source_def_id = ?`
+      )
+        .bind(defId)
+        .run();
+
+      return json({ ok: true, removedItems: removed.meta.changes || 0 });
+    }
+  }
+
   // ---- Auth ----
   if (method === "POST" && path === "/api/login") {
     const body = (await request.json().catch(() => null)) as {
@@ -476,7 +642,11 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
 
     const packetId = newId("pkt");
     const blocks = Array.isArray(body.privilegeBlocks) ? body.privilegeBlocks : [];
-    const checklist = checklistFor(body.credentialingType as "new" | "recred");
+    const checklist = await resolveChecklistForPacket(env, {
+      credentialingType: body.credentialingType as "new" | "recred",
+      specialty: body.specialty,
+      packetId: null,
+    });
 
     await env.DB.prepare(
       `INSERT INTO packets
@@ -497,9 +667,18 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
 
     const itemStmts = checklist.map((c, i) =>
       env.DB.prepare(
-        `INSERT INTO packet_items (id, packet_id, item_key, label, sort_order, status, notes)
-         VALUES (?, ?, ?, ?, ?, 'pending', '')`
-      ).bind(newId("item"), packetId, c.key, c.label, i + 1)
+        `INSERT INTO packet_items
+          (id, packet_id, item_key, label, sort_order, status, notes, source_scope, source_def_id)
+         VALUES (?, ?, ?, ?, ?, 'pending', '', ?, ?)`
+      ).bind(
+        newId("item"),
+        packetId,
+        c.key,
+        c.label,
+        i + 1,
+        c.scope || "global",
+        c.defId || null
+      )
     );
     if (itemStmts.length) await env.DB.batch(itemStmts);
     await createVoteSlots(env, packetId);
