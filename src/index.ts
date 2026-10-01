@@ -131,6 +131,23 @@ async function requireAdmin(env: Env, request: Request): Promise<Authed | Respon
   return auth;
 }
 
+async function requireAdminOrBoard(env: Env, request: Request): Promise<Authed | Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  if (auth.user.role !== "admin" && auth.user.role !== "board") {
+    return error("Admin or governing board access required", 403);
+  }
+  return auth;
+}
+
+/** Normalize DB role quirks (watcher may still be stored as board). */
+function effectiveUserRole(row: { id: string; username: string; role: string }): string {
+  if (row.id === "usr_watcher" || row.username.toLowerCase() === "watcher") {
+    return "watcher";
+  }
+  return row.role;
+}
+
 function mapItem(row: PacketItemRow) {
   return {
     id: row.id,
@@ -223,7 +240,14 @@ async function loadPacketDetail(env: Env, id: string, specialties?: Record<strin
 
   const votes = (
     await env.DB.prepare(
-      `SELECT * FROM votes WHERE packet_id = ? ORDER BY voter_name ASC`
+      `SELECT v.* FROM votes v
+       LEFT JOIN users u ON u.id = v.voter_user_id
+       WHERE v.packet_id = ?
+         AND v.voter_user_id != 'usr_watcher'
+         AND lower(v.voter_name) != 'watcher'
+         AND coalesce(u.role, 'board') != 'watcher'
+         AND coalesce(lower(u.username), '') != 'watcher'
+       ORDER BY v.voter_name ASC`
     )
       .bind(id)
       .all<VoteRow>()
@@ -239,6 +263,7 @@ async function createVoteSlots(env: Env, packetId: string) {
       `SELECT id, display_name FROM users
        WHERE role = 'board' AND active = 1
          AND id != 'usr_watcher' AND username != 'watcher'
+         AND lower(username) != 'watcher'
        ORDER BY display_name`
     ).all<{ id: string; display_name: string }>()
   ).results;
@@ -251,6 +276,17 @@ async function createVoteSlots(env: Env, packetId: string) {
   );
 
   if (stmts.length) await env.DB.batch(stmts);
+
+  // Watchers must never appear in the board vote grid.
+  await env.DB.prepare(
+    `DELETE FROM votes
+     WHERE packet_id = ?
+       AND (voter_user_id = 'usr_watcher' OR lower(voter_name) = 'watcher'
+            OR voter_user_id IN (SELECT id FROM users WHERE role = 'watcher'
+                                 OR id = 'usr_watcher' OR lower(username) = 'watcher'))`
+  )
+    .bind(packetId)
+    .run();
 }
 
 async function packetHasOpenItems(env: Env, packetId: string): Promise<boolean> {
@@ -260,6 +296,75 @@ async function packetHasOpenItems(env: Env, packetId: string): Promise<boolean> 
     .bind(packetId)
     .first<{ n: number }>();
   return (row?.n || 0) > 0;
+}
+
+async function packetItemCounts(
+  env: Env,
+  packetId: string
+): Promise<{ total: number; pending: number }> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS total,
+            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending
+     FROM packet_items WHERE packet_id = ?`
+  )
+    .bind(packetId)
+    .first<{ total: number; pending: number | null }>();
+  return { total: row?.total || 0, pending: row?.pending || 0 };
+}
+
+/** When every checklist item is Complete or N/A, move In Progress → Ready for Review. */
+async function autoMarkReadyIfComplete(
+  env: Env,
+  packetId: string,
+  actor: { id: string; name: string } | null
+): Promise<boolean> {
+  const packet = await env.DB.prepare(`SELECT * FROM packets WHERE id = ?`)
+    .bind(packetId)
+    .first<PacketRow>();
+  if (!packet || packet.status !== "in_progress") return false;
+
+  const { total, pending } = await packetItemCounts(env, packetId);
+  if (total === 0 || pending > 0) return false;
+
+  await env.DB.prepare(
+    `UPDATE packets SET status = 'ready_for_review', ready_at = datetime('now'),
+       updated_at = datetime('now'), closed_at = NULL
+     WHERE id = ? AND status = 'in_progress'`
+  )
+    .bind(packetId)
+    .run();
+
+  await logPacketEvent(
+    env,
+    packetId,
+    actor,
+    "marked_ready",
+    "Marked packet Ready for Review",
+    "All checklist components Complete or N/A"
+  );
+  return true;
+}
+
+/** Promote any In Progress packets that are already 100% complete. */
+async function promoteCompletePackets(env: Env): Promise<number> {
+  const rows = (
+    await env.DB.prepare(
+      `SELECT p.id
+       FROM packets p
+       WHERE p.status = 'in_progress'
+         AND EXISTS (SELECT 1 FROM packet_items i WHERE i.packet_id = p.id)
+         AND NOT EXISTS (
+           SELECT 1 FROM packet_items i2
+           WHERE i2.packet_id = p.id AND i2.status = 'pending'
+         )`
+    ).all<{ id: string }>()
+  ).results;
+
+  let n = 0;
+  for (const row of rows) {
+    if (await autoMarkReadyIfComplete(env, row.id, null)) n += 1;
+  }
+  return n;
 }
 
 /** Ready-for-review is invalid while any checklist item is still Pending. */
@@ -427,7 +532,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         username: u.username,
         displayName: u.display_name,
         email: u.email,
-        role: u.role,
+        role: effectiveUserRole(u),
         active: !!u.active,
         mustChangePassword: !!u.must_change_password,
         createdAt: u.created_at,
@@ -1018,11 +1123,23 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     const auth = await requireAuth(env, request);
     if (auth instanceof Response) return auth;
 
-    // Heal stale Ready-for-Review packets that still have open items.
+    // Heal stale Ready-for-Review packets that still have open items,
+    // and promote In Progress packets that are already 100% complete.
     try {
       await revertReadyPacketsWithOpenItems(env);
+      await promoteCompletePackets(env);
+      // Keep watcher out of board vote grids on existing packets.
+      await env.DB.prepare(
+        `DELETE FROM votes
+         WHERE voter_user_id = 'usr_watcher'
+            OR lower(voter_name) = 'watcher'
+            OR voter_user_id IN (
+              SELECT id FROM users
+              WHERE role = 'watcher' OR id = 'usr_watcher' OR lower(username) = 'watcher'
+            )`
+      ).run();
     } catch (err) {
-      console.error("revertReadyPacketsWithOpenItems failed", err);
+      console.error("packet status reconcile failed", err);
     }
 
     const status = url.searchParams.get("status");
@@ -1178,7 +1295,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     }
 
     if (method === "PATCH" && rest === "") {
-      const auth = await requireAdmin(env, request);
+      const auth = await requireAdminOrBoard(env, request);
       if (auth instanceof Response) return auth;
 
       const existing = await env.DB.prepare(`SELECT * FROM packets WHERE id = ?`)
@@ -1192,11 +1309,26 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         privilegeBlocks?: string[];
       } | null;
 
-      const nextName = body?.providerName?.trim() || existing.provider_name;
+      const isBoard = auth.user.role === "board";
+      if (isBoard) {
+        // Board members may only update shared packet notes.
+        if (body?.providerName !== undefined || body?.privilegeBlocks !== undefined) {
+          return error("Governing board members may only update notes", 403);
+        }
+        if (body?.notes === undefined) {
+          return error("Notes are required");
+        }
+      }
+
+      const nextName =
+        isBoard || body?.providerName === undefined
+          ? existing.provider_name
+          : body.providerName.trim() || existing.provider_name;
       const nextNotes = body?.notes !== undefined ? body.notes : existing.notes;
-      const nextBlocks = body?.privilegeBlocks
-        ? JSON.stringify(body.privilegeBlocks)
-        : existing.privilege_blocks;
+      const nextBlocks =
+        isBoard || !body?.privilegeBlocks
+          ? existing.privilege_blocks
+          : JSON.stringify(body.privilegeBlocks);
 
       await env.DB.prepare(
         `UPDATE packets SET
@@ -1219,7 +1351,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           packetId,
           { id: auth.user.id, name: auth.user.displayName },
           "packet_updated",
-          "Updated packet details",
+          isBoard ? "Updated packet notes" : "Updated packet details",
           changes.join("; ")
         );
       }
@@ -1302,6 +1434,13 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         );
       }
 
+      if (nextStatus !== item.status) {
+        await autoMarkReadyIfComplete(env, packetId, {
+          id: auth.user.id,
+          name: auth.user.displayName,
+        });
+      }
+
       return json({ packet: await loadPacketDetail(env, packetId) });
     }
 
@@ -1343,6 +1482,11 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         `Removed checklist item: ${item.label}`,
         ""
       );
+
+      await autoMarkReadyIfComplete(env, packetId, {
+        id: auth.user.id,
+        name: auth.user.displayName,
+      });
 
       return json({ packet: await loadPacketDetail(env, packetId) });
     }
@@ -1551,10 +1695,13 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       });
     }
 
-    // Post a comment (all authenticated users, including watchers)
+    // Post a comment (admin and board; watchers are read-only)
     if (method === "POST" && rest === "/comments") {
       const auth = await requireAuth(env, request);
       if (auth instanceof Response) return auth;
+      if (auth.user.role === "watcher") {
+        return error("Watchers have read-only access", 403);
+      }
 
       const packet = await env.DB.prepare(`SELECT * FROM packets WHERE id = ?`)
         .bind(packetId)
