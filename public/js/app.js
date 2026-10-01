@@ -30,6 +30,24 @@ const SPECIALTY_BY_PROVIDER = {
   anesthesia: ["anesthesia_physician", "anesthesia_crna"],
 };
 
+const PROVIDER_ROLE_LABELS = {
+  surgeon: "Surgeon",
+  pa: "Physician Assistant",
+  anesthesia: "Anesthesiologist",
+  anesthesia_physician: "Anesthesiologist",
+  anesthesia_crna: "CRNA",
+};
+
+function providerRoleLabel(packet) {
+  if (packet?.specialty === "anesthesia_crna") return PROVIDER_ROLE_LABELS.anesthesia_crna;
+  if (packet?.specialty === "anesthesia_physician") {
+    return PROVIDER_ROLE_LABELS.anesthesia_physician;
+  }
+  return PROVIDER_ROLE_LABELS[packet?.providerType] || packet?.providerType || "";
+}
+
+const TEMP_PASSWORD_HINT = "ChangeMeBoard1!";
+
 let state = {
   user: null,
   meta: null,
@@ -40,11 +58,12 @@ let state = {
   minPct: 0,
   sortBy: "updatedAt", // name | specialty | pct | status | updatedAt | createdAt
   sortDir: "desc", // asc | desc
-  view: "list", // list | detail | password | checklist
+  view: "list", // list | detail | password | checklist | users
   packetId: null,
   modal: null,
   activity: null,
   checklistDefs: [],
+  users: [],
 };
 
 const app = document.getElementById("app");
@@ -207,6 +226,21 @@ function currentPacket() {
   return state.packets.find((p) => p.id === state.packetId) || null;
 }
 
+function accountMenuItems() {
+  const items = [];
+  if (state.user.role === "admin") {
+    items.push(
+      `<button type="button" class="account-menu-item" data-action="open-checklist-admin">Edit Packet Requirements</button>`,
+      `<button type="button" class="account-menu-item" data-action="open-users-admin">Add User</button>`
+    );
+  }
+  items.push(
+    `<button type="button" class="account-menu-item" data-action="change-password">Change Password</button>`,
+    `<button type="button" class="account-menu-item danger" data-action="logout">Log Out</button>`
+  );
+  return items.join("");
+}
+
 function shell(content) {
   return `
     <header class="topbar">
@@ -229,8 +263,14 @@ function shell(content) {
                   : "Governing board"
             }</span>
           </div>
-          <button class="btn ghost sm" data-action="change-password">Password</button>
-          <button class="btn ghost sm" data-action="logout">Sign out</button>
+          <details class="account-menu">
+            <summary class="account-menu-toggle" aria-label="Account menu">
+              <span class="account-menu-caret" aria-hidden="true"></span>
+            </summary>
+            <div class="account-menu-panel">
+              ${accountMenuItems()}
+            </div>
+          </details>
         </div>
       </div>
     </header>
@@ -247,6 +287,11 @@ function render() {
   }
   if (state.view === "checklist") {
     app.innerHTML = shell(renderChecklistAdmin());
+    bind();
+    return;
+  }
+  if (state.view === "users") {
+    app.innerHTML = shell(renderUsersAdmin());
     bind();
     return;
   }
@@ -365,8 +410,7 @@ function renderList() {
       <div class="btn-row">
         ${
           state.user.role === "admin"
-            ? `<button class="btn ghost" data-action="open-checklist-admin">Checklist items</button>
-               <button class="btn primary" data-action="new-packet">New packet</button>`
+            ? `<button class="btn primary" data-action="new-packet">New packet</button>`
             : ""
         }
       </div>
@@ -491,7 +535,7 @@ function renderDetail(p) {
         p.credentialingType === "new" ? "New credentialing" : "Recredentialing"
       }</div>
       <div class="meta-row">
-        <span class="pill">${esc(p.providerType)}</span>
+        <span class="pill provider-role">${esc(providerRoleLabel(p))}</span>
       </div>
       <div class="progress-bar detail-progress" aria-hidden="true"><span style="width:${progressPct(p)}%;background:${progressColor(progressPct(p))}"></span></div>
       <div class="progress-label">${esc(progressLabel(p))}</div>
@@ -741,6 +785,104 @@ function renderVoteCard(packet, vote, canVote) {
   `;
 }
 
+function roleLabel(role) {
+  if (role === "admin") return "Admin";
+  if (role === "board") return "Governing board";
+  if (role === "watcher") return "Watcher";
+  return role;
+}
+
+function renderUsersAdmin() {
+  const users = state.users || [];
+  return `
+    <button class="btn ghost sm detail-back" data-action="back">← All packets</button>
+    <div class="page-head">
+      <div>
+        <h2>Users</h2>
+        <p>Add individual access. New accounts start with temporary password <code>${esc(TEMP_PASSWORD_HINT)}</code> and must create a new password on first login.</p>
+      </div>
+    </div>
+
+    <section class="section">
+      <div class="section-h"><span>Add user</span></div>
+      <div class="section-b">
+        <form id="add-user-form" class="user-form">
+          <div class="user-form-grid">
+            <label class="fld"><span>First name</span><input name="firstName" required autocomplete="given-name"></label>
+            <label class="fld"><span>Last name</span><input name="lastName" required autocomplete="family-name"></label>
+            <label class="fld"><span>Email address</span><input name="email" type="email" required autocomplete="email"></label>
+            <label class="fld"><span>Username</span><input name="username" required minlength="3" autocomplete="username" placeholder="jane.doe"></label>
+            <label class="fld"><span>Role</span>
+              <select name="role" required>
+                <option value="board">Governing board</option>
+                <option value="admin">Admin</option>
+                <option value="watcher">Watcher</option>
+              </select>
+            </label>
+          </div>
+          <p class="form-error" id="add-user-error" hidden></p>
+          <p class="form-success" id="add-user-success" hidden></p>
+          <div class="btn-row">
+            <button class="btn primary" type="submit">Create user</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-h slate"><span>Active users</span><span>${users.length}</span></div>
+      <div class="section-b check-list">
+        ${
+          users.length
+            ? users
+                .map(
+                  (u) => `
+              <div class="check-row user-row">
+                <div>
+                  <div class="label">${esc(u.displayName)}</div>
+                  <div class="notes">${esc(u.username)} · ${esc(u.email || "No email")} · ${esc(roleLabel(u.role))}${
+                    u.mustChangePassword ? " · First login pending" : ""
+                  }</div>
+                </div>
+                <div class="btn-row">
+                  ${
+                    u.id === state.user.id
+                      ? `<span class="notes">You</span>`
+                      : `<button class="btn danger sm" data-action="delete-user" data-id="${esc(u.id)}" data-name="${esc(u.displayName)}">Delete</button>`
+                  }
+                </div>
+              </div>`
+                )
+                .join("")
+            : `<div class="empty">No active users found.</div>`
+        }
+      </div>
+    </section>
+  `;
+}
+
+function modalDeleteUser(userId, displayName) {
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <form class="modal" id="delete-user-form" data-stop data-user-id="${esc(userId)}">
+        <h3>Delete user</h3>
+        <p style="margin:0;color:var(--muted)">
+          This will remove access for <strong>${esc(displayName)}</strong>. Type <strong>DELETE USER</strong> to confirm.
+        </p>
+        <label class="fld">
+          <span>Confirmation</span>
+          <input name="confirm" required autocomplete="off" placeholder="DELETE USER">
+        </label>
+        <p class="form-error" id="delete-user-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" data-action="close-modal">Cancel</button>
+          <button type="submit" class="btn danger">Delete user</button>
+        </div>
+      </form>
+    </div>
+  `;
+}
+
 function renderChecklistAdmin() {
   const defs = state.checklistDefs || [];
   const globalNew = defs.filter((d) => d.scope === "global" && (d.credentialingType === "new" || d.credentialingType === "both"));
@@ -772,7 +914,7 @@ function renderChecklistAdmin() {
     <button class="btn ghost sm detail-back" data-action="back">← All packets</button>
     <div class="page-head">
       <div>
-        <h2>Checklist items</h2>
+        <h2>Packet requirements</h2>
         <p>Manage required components for all packets, one specialty, or a single provider.</p>
       </div>
       <button class="btn primary" data-action="new-checklist-def">Add checklist item</button>
@@ -1150,6 +1292,81 @@ function bind() {
     });
   });
 
+  const addUserForm = document.getElementById("add-user-form");
+  if (addUserForm) {
+    addUserForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(addUserForm);
+      const err = document.getElementById("add-user-error");
+      const ok = document.getElementById("add-user-success");
+      if (err) {
+        err.hidden = true;
+        err.textContent = "";
+      }
+      if (ok) {
+        ok.hidden = true;
+        ok.textContent = "";
+      }
+      try {
+        const data = await api("/api/users", {
+          method: "POST",
+          body: JSON.stringify({
+            firstName: fd.get("firstName"),
+            lastName: fd.get("lastName"),
+            email: fd.get("email"),
+            username: fd.get("username"),
+            role: fd.get("role"),
+          }),
+        });
+        addUserForm.reset();
+        const list = await api("/api/users");
+        state.users = list.users || [];
+        render();
+        const success = document.getElementById("add-user-success");
+        if (success) {
+          success.hidden = false;
+          success.textContent = `Created ${data.user.displayName} (${data.user.username}). Temporary password: ${data.temporaryPassword || TEMP_PASSWORD_HINT}`;
+        }
+      } catch (ex) {
+        if (err) {
+          err.textContent = ex.message;
+          err.hidden = false;
+        }
+      }
+    });
+  }
+
+  const deleteUserForm = document.getElementById("delete-user-form");
+  if (deleteUserForm) {
+    deleteUserForm.addEventListener("click", (e) => e.stopPropagation());
+    deleteUserForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(deleteUserForm);
+      const err = document.getElementById("delete-user-error");
+      const confirmText = String(fd.get("confirm") || "").trim();
+      if (confirmText !== "DELETE USER") {
+        if (err) {
+          err.textContent = 'Type DELETE USER exactly to confirm.';
+          err.hidden = false;
+        }
+        return;
+      }
+      try {
+        const userId = deleteUserForm.getAttribute("data-user-id");
+        await api(`/api/users/${userId}`, { method: "DELETE" });
+        state.modal = null;
+        const list = await api("/api/users");
+        state.users = list.users || [];
+        render();
+      } catch (ex) {
+        if (err) {
+          err.textContent = ex.message;
+          err.hidden = false;
+        }
+      }
+    });
+  }
+
   const pause = document.getElementById("pause-form");
   if (pause) {
     pause.addEventListener("click", (e) => e.stopPropagation());
@@ -1324,6 +1541,24 @@ async function onAction(e) {
     state.modal = null;
     const data = await api("/api/checklist-defs");
     state.checklistDefs = data.defs || [];
+    render();
+    return;
+  }
+
+  if (action === "open-users-admin") {
+    if (state.user.role !== "admin") return;
+    state.view = "users";
+    state.modal = null;
+    const data = await api("/api/users");
+    state.users = data.users || [];
+    render();
+    return;
+  }
+
+  if (action === "delete-user") {
+    const id = el.getAttribute("data-id");
+    const name = el.getAttribute("data-name") || "this user";
+    state.modal = modalDeleteUser(id, name);
     render();
     return;
   }
