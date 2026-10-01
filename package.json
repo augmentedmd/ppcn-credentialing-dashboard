@@ -6,12 +6,12 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:migrate:local": "wrangler d1 execute ppcn-credentialing --local --file=./migrations/0001_init.sql && wrangler d1 execute ppcn-credentialing --local --file=./migrations/0004_activity_log.sql && wrangler d1 execute ppcn-credentialing --local --file=./migrations/0006_checklist_templates.sql && wrangler d1 execute ppcn-credentialing --local --file=./migrations/0007_demo_credentials.sql",
-    "db:migrate:remote": "wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0001_init.sql && wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0004_activity_log.sql && wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0006_checklist_templates.sql && wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0007_demo_credentials.sql",
+    "db:migrate:local": "wrangler d1 execute ppcn-credentialing --local --file=./migrations/0001_init.sql && wrangler d1 execute ppcn-credentialing --local --file=./migrations/0004_activity_log.sql && wrangler d1 execute ppcn-credentialing --local --file=./migrations/0006_checklist_templates.sql && wrangler d1 execute ppcn-credentialing --local --file=./migrations/0007_demo_credentials.sql && wrangler d1 execute ppcn-credentialing --local --file=./migrations/0008_admin_features.sql && wrangler d1 execute ppcn-credentialing --local --file=./migrations/0009_comments_and_rich_searles.sql",
+    "db:migrate:remote": "wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0001_init.sql && wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0004_activity_log.sql && wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0006_checklist_templates.sql && wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0007_demo_credentials.sql && wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0008_admin_features.sql && wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0009_comments_and_rich_searles.sql",
     "db:seed:local": "wrangler d1 execute ppcn-credentialing --local --file=./migrations/0002_seed.sql",
     "db:seed:remote": "wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0002_seed.sql",
-    "db:demo:local": "wrangler d1 execute ppcn-credentialing --local --file=./migrations/0003_demo_packets.sql && wrangler d1 execute ppcn-credentialing --local --file=./migrations/0005_demo_activity.sql",
-    "db:demo:remote": "wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0003_demo_packets.sql && wrangler d1 execute ppcn-credentialing --remote --file=./migrations/0005_demo_activity.sql",
+    "db:demo:local": "wrangler d1 execute ppcn-credentialing --local --file=./scripts/demo/0003_demo_packets.sql && wrangler d1 execute ppcn-credentialing --local --file=./scripts/demo/0005_demo_activity.sql",
+    "db:demo:remote": "wrangler d1 execute ppcn-credentialing --remote --file=./scripts/demo/0003_demo_packets.sql && wrangler d1 execute ppcn-credentialing --remote --file=./scripts/demo/0005_demo_activity.sql",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

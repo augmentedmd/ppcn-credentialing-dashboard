@@ -9,6 +9,20 @@ import { newId } from "./checklist-id";
 
 export { newId } from "./checklist-id";
 
+/** Load specialties from database as a key->label map */
+export async function loadSpecialtiesMap(env: Env): Promise<Record<string, string>> {
+  const rows = (
+    await env.DB.prepare(
+      `SELECT key, label FROM specialties WHERE active = 1`
+    ).all<{ key: string; label: string }>()
+  ).results;
+  const map: Record<string, string> = {};
+  for (const row of rows) {
+    map[row.key] = row.label;
+  }
+  return map;
+}
+
 /** Fallback core packet components (used only if DB templates are empty). */
 export const BASE_CHECKLIST: ChecklistDef[] = [
   { key: "references", label: "Three Professional References" },
@@ -88,6 +102,7 @@ export const BOARD_MEMBER_IDS = [
   "usr_michael_herman",
   "usr_vijay_mukhija",
   "usr_stelios",
+  "usr_rich_searles",
 ] as const;
 
 export function checklistFor(type: CredentialingType): ChecklistDef[] {
@@ -102,7 +117,7 @@ export function mapChecklistDef(row: ChecklistDefRow) {
     scope: row.scope,
     credentialingType: row.credentialing_type,
     specialty: row.specialty,
-    specialtyLabel: row.specialty ? SPECIALTIES[row.specialty] || row.specialty : null,
+    specialtyLabel: row.specialty || null,
     packetId: row.packet_id,
     sortOrder: row.sort_order,
     active: !!row.active,

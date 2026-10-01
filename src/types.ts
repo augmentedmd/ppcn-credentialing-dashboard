@@ -27,17 +27,20 @@ export interface UserRow {
   id: string;
   username: string;
   display_name: string;
+  email: string;
   role: Role;
   password_hash: string;
   password_salt: string;
   must_change_password: number;
   active: number;
+  created_at: string;
 }
 
 export interface PublicUser {
   id: string;
   username: string;
   displayName: string;
+  email: string;
   role: Role;
   mustChangePassword: boolean;
 }
@@ -125,5 +128,24 @@ export interface PacketEventRow {
   event_type: PacketEventType | string;
   summary: string;
   detail: string;
+  created_at: string;
+}
+
+export interface SpecialtyRow {
+  id: string;
+  key: string;
+  label: string;
+  provider_type: ProviderType;
+  sort_order: number;
+  active: number;
+  created_at: string;
+}
+
+export interface PacketCommentRow {
+  id: string;
+  packet_id: string;
+  user_id: string;
+  user_name: string;
+  comment: string;
   created_at: string;
 }
