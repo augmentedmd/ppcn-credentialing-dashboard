@@ -501,7 +501,9 @@ function renderDetail(p) {
   const status = effectiveStatus(p);
   const canEditItems =
     state.user.role === "admin" &&
-    (status === "in_progress" || status === "query_pending");
+    (status === "in_progress" ||
+      status === "query_pending" ||
+      status === "ready_for_review");
   const canEditPacketNotes =
     (state.user.role === "admin" || state.user.role === "board") &&
     (status === "in_progress" || status === "query_pending" || status === "ready_for_review");

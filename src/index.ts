@@ -1381,14 +1381,17 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       }
 
       const canEditStatus =
-        packet.status === "in_progress" || packet.status === "query_pending";
-      const canEditNotes =
-        canEditStatus || packet.status === "ready_for_review";
+        packet.status === "in_progress" ||
+        packet.status === "query_pending" ||
+        packet.status === "ready_for_review";
+      const canEditNotes = canEditStatus;
       if (!canEditNotes) {
         return error("Checklist notes can only be edited before the packet is closed");
       }
       if (body?.status && !canEditStatus) {
-        return error("Checklist status can only be edited while in progress or query pending");
+        return error(
+          "Checklist status can only be edited while in progress, query pending, or ready for review"
+        );
       }
 
       const item = await env.DB.prepare(
@@ -1435,6 +1438,8 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       }
 
       if (nextStatus !== item.status) {
+        // Pending items demote Ready → In Progress; all Complete/N/A promotes back.
+        await revertReadyPacketsWithOpenItems(env, packetId);
         await autoMarkReadyIfComplete(env, packetId, {
           id: auth.user.id,
           name: auth.user.displayName,
