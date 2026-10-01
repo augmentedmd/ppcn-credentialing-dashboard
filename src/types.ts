@@ -1,4 +1,4 @@
-export type Role = "admin" | "board";
+export type Role = "admin" | "board" | "watcher";
 
 export type PacketStatus =
   | "in_progress"

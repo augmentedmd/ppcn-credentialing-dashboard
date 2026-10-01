@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL UNIQUE COLLATE NOCASE,
   display_name TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('admin', 'board')),
+  role TEXT NOT NULL CHECK (role IN ('admin', 'board', 'watcher')),
   password_hash TEXT NOT NULL,
   password_salt TEXT NOT NULL,
   must_change_password INTEGER NOT NULL DEFAULT 1,

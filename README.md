@@ -20,18 +20,26 @@ Part of the [AugmentedMD](https://github.com/augmentedmd/augmentedmd) tool panel
 - Cloudflare **D1** (SQLite) for users, sessions, packets, checklist items, and votes
 - Session cookie auth (HttpOnly, Secure, SameSite=Lax) with PBKDF2 password hashes
 
-## Default accounts (change on first login)
+## Demo accounts (easy sign-in)
+
+| Username | Password | Role | Notes |
+|----------|----------|------|-------|
+| `board` | `board` | Governing board | Votes as **Michael Gorin** |
+| `watcher` | `watcher` | Watcher | Read-only; can view packets and votes |
+
+These two accounts skip the forced password-change prompt so demos stay frictionless.
+
+## Other default accounts (change on first login)
 
 | Username | Role | Temporary password |
 |----------|------|--------------------|
 | `admin` | Credentialing staff | `ChangeMeAdmin1!` |
 | `ken.long` | Governing board | `ChangeMeBoard1!` |
-| `michael.gorin` | Governing board | `ChangeMeBoard1!` |
 | `michael.herman` | Governing board | `ChangeMeBoard1!` |
 | `vijay.mukhija` | Governing board | `ChangeMeBoard1!` |
 | `stelios.koutsoumbelis` | Governing board | `ChangeMeBoard1!` |
 
-Users are prompted to change these passwords on first sign-in.
+Staff and other board users are prompted to change these passwords on first sign-in.
 
 ## Local development
 
