@@ -232,7 +232,10 @@ async function loadPacketDetail(env: Env, id: string, specialties?: Record<strin
 async function createVoteSlots(env: Env, packetId: string) {
   const board = (
     await env.DB.prepare(
-      `SELECT id, display_name FROM users WHERE role = 'board' AND active = 1 ORDER BY display_name`
+      `SELECT id, display_name FROM users
+       WHERE role = 'board' AND active = 1
+         AND id != 'usr_watcher' AND username != 'watcher'
+       ORDER BY display_name`
     ).all<{ id: string; display_name: string }>()
   ).results;
 
