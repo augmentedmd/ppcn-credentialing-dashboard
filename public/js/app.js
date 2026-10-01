@@ -535,7 +535,11 @@ function renderDetail(p) {
         p.credentialingType === "new" ? "New credentialing" : "Recredentialing"
       }</div>
       <div class="meta-row">
+<<<<<<< HEAD
         <span class="pill provider-role">${esc(providerRoleLabel(p))}</span>
+=======
+        <span class="pill">${esc(p.providerType)}</span>
+>>>>>>> origin/main
       </div>
       <div class="progress-bar detail-progress" aria-hidden="true"><span style="width:${progressPct(p)}%;background:${progressColor(progressPct(p))}"></span></div>
       <div class="progress-label">${esc(progressLabel(p))}</div>
