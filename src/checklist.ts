@@ -102,6 +102,7 @@ export const BOARD_MEMBER_IDS = [
   "usr_michael_herman",
   "usr_vijay_mukhija",
   "usr_stelios",
+  "usr_rich_searles",
 ] as const;
 
 export function checklistFor(type: CredentialingType): ChecklistDef[] {

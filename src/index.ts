@@ -7,6 +7,7 @@ import {
   toPublicUser,
   hashPassword,
   verifyPassword,
+  validatePassword,
 } from "./auth";
 import {
   BOARD_MEMBER_IDS,
@@ -23,6 +24,7 @@ import type {
   ChecklistScope,
   Env,
   ItemStatus,
+  PacketCommentRow,
   PacketEventRow,
   PacketEventType,
   PacketItemRow,
@@ -390,7 +392,9 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
 
     const password = body.password?.trim();
     if (!password) return error("Temporary password is required");
-    if (password.length < 10) return error("Password must be at least 10 characters");
+    
+    const passwordCheck = validatePassword(password);
+    if (!passwordCheck.valid) return error(passwordCheck.error!);
 
     const existing = await env.DB.prepare(
       `SELECT id FROM users WHERE username = ? COLLATE NOCASE`
@@ -905,9 +909,10 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     if (!body?.currentPassword || !body?.newPassword) {
       return error("Current and new password are required");
     }
-    if (body.newPassword.length < 10) {
-      return error("New password must be at least 10 characters");
-    }
+    
+    const passwordCheck = validatePassword(body.newPassword);
+    if (!passwordCheck.valid) return error(passwordCheck.error!);
+    
     if (
       !(await verifyPassword(
         body.currentPassword,
@@ -1406,6 +1411,98 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       );
 
       return json({ packet: await loadPacketDetail(env, packetId) });
+    }
+
+    // Get packet comments
+    if (method === "GET" && rest === "/comments") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+
+      const exists = await env.DB.prepare(`SELECT id FROM packets WHERE id = ?`)
+        .bind(packetId)
+        .first();
+      if (!exists) return error("Packet not found", 404);
+
+      const comments = (
+        await env.DB.prepare(
+          `SELECT * FROM packet_comments WHERE packet_id = ? ORDER BY created_at ASC`
+        )
+          .bind(packetId)
+          .all<PacketCommentRow>()
+      ).results;
+
+      return json({
+        comments: comments.map((c) => ({
+          id: c.id,
+          packetId: c.packet_id,
+          userId: c.user_id,
+          userName: c.user_name,
+          comment: c.comment,
+          createdAt: c.created_at,
+        })),
+      });
+    }
+
+    // Post a comment (all authenticated users, including watchers)
+    if (method === "POST" && rest === "/comments") {
+      const auth = await requireAuth(env, request);
+      if (auth instanceof Response) return auth;
+
+      const packet = await env.DB.prepare(`SELECT * FROM packets WHERE id = ?`)
+        .bind(packetId)
+        .first<PacketRow>();
+      if (!packet) return error("Packet not found", 404);
+
+      const body = (await request.json().catch(() => null)) as {
+        comment?: string;
+      } | null;
+
+      const comment = body?.comment?.trim();
+      if (!comment) return error("Comment is required");
+
+      const commentId = newId("cmt");
+
+      await env.DB.prepare(
+        `INSERT INTO packet_comments (id, packet_id, user_id, user_name, comment)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+        .bind(commentId, packetId, auth.user.id, auth.user.displayName, comment)
+        .run();
+
+      await env.DB.prepare(
+        `UPDATE packets SET updated_at = datetime('now') WHERE id = ?`
+      )
+        .bind(packetId)
+        .run();
+
+      await logPacketEvent(
+        env,
+        packetId,
+        { id: auth.user.id, name: auth.user.displayName },
+        "packet_updated",
+        `${auth.user.displayName} added a comment`,
+        comment
+      );
+
+      const newComment = await env.DB.prepare(
+        `SELECT * FROM packet_comments WHERE id = ?`
+      )
+        .bind(commentId)
+        .first<PacketCommentRow>();
+
+      return json(
+        {
+          comment: {
+            id: newComment!.id,
+            packetId: newComment!.packet_id,
+            userId: newComment!.user_id,
+            userName: newComment!.user_name,
+            comment: newComment!.comment,
+            createdAt: newComment!.created_at,
+          },
+        },
+        { status: 201 }
+      );
     }
 
     if (method === "DELETE" && rest === "") {

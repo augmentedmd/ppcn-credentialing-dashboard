@@ -140,3 +140,12 @@ export interface SpecialtyRow {
   active: number;
   created_at: string;
 }
+
+export interface PacketCommentRow {
+  id: string;
+  packet_id: string;
+  user_id: string;
+  user_name: string;
+  comment: string;
+  created_at: string;
+}
