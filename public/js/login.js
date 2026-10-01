@@ -18,12 +18,42 @@ const form = document.getElementById("login-form");
 const errEl = document.getElementById("login-error");
 const btn = document.getElementById("login-btn");
 
-// If already signed in, go to dashboard
+function authHopCount() {
+  return Number(sessionStorage.getItem("ppcn_auth_hop") || "0") || 0;
+}
+
+function bumpAuthHop() {
+  const next = authHopCount() + 1;
+  sessionStorage.setItem("ppcn_auth_hop", String(next));
+  return next;
+}
+
+function clearAuthHop() {
+  sessionStorage.removeItem("ppcn_auth_hop");
+}
+
+// If already signed in, go to dashboard — but bail out of redirect loops.
 api("/api/me")
-  .then(() => {
+  .then(async () => {
+    if (authHopCount() >= 2) {
+      clearAuthHop();
+      // Clear a sticky/broken session so the form is usable.
+      try {
+        await api("/api/logout", { method: "POST", body: "{}" });
+      } catch {
+        /* ignore */
+      }
+      errEl.textContent =
+        "Sign-in hit a redirect loop, so the previous session was cleared. Please sign in again.";
+      errEl.hidden = false;
+      return;
+    }
+    bumpAuthHop();
     location.replace("/");
   })
-  .catch(() => {});
+  .catch(() => {
+    clearAuthHop();
+  });
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -38,6 +68,7 @@ form.addEventListener("submit", async (e) => {
         password: document.getElementById("password").value,
       }),
     });
+    clearAuthHop();
     location.replace("/");
   } catch (err) {
     errEl.textContent = err.message;
