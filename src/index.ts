@@ -257,7 +257,8 @@ async function loadPacketDetail(env: Env, id: string, specialties?: Record<strin
        WHERE v.packet_id = ?
          AND v.voter_user_id != 'usr_watcher'
          AND lower(v.voter_name) != 'watcher'
-         AND coalesce(u.role, 'board') != 'watcher'
+         AND coalesce(u.role, 'board') = 'board'
+         AND coalesce(u.active, 1) = 1
          AND coalesce(lower(u.username), '') != 'watcher'
        ORDER BY v.voter_name ASC`
     )
@@ -1222,7 +1223,17 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           .all<PacketItemRow>()
       ).results;
       const votes = (
-        await env.DB.prepare(`SELECT * FROM votes WHERE packet_id = ?`)
+        await env.DB.prepare(
+          `SELECT v.* FROM votes v
+           LEFT JOIN users u ON u.id = v.voter_user_id
+           WHERE v.packet_id = ?
+             AND v.voter_user_id != 'usr_watcher'
+             AND lower(v.voter_name) != 'watcher'
+             AND coalesce(u.role, 'board') = 'board'
+             AND coalesce(u.active, 1) = 1
+             AND coalesce(lower(u.username), '') != 'watcher'
+           ORDER BY v.voter_name ASC`
+        )
           .bind(p.id)
           .all<VoteRow>()
       ).results;

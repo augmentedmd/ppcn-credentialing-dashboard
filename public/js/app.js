@@ -1563,6 +1563,14 @@ async function onAction(e) {
     state.packetId = el.getAttribute("data-id");
     state.view = "detail";
     render();
+    // Reload detail so board vote slots (e.g. newly added members) are current.
+    try {
+      const data = await api(`/api/packets/${state.packetId}`);
+      if (data.packet) replacePacket(data.packet);
+      render();
+    } catch (_) {
+      /* keep list snapshot if detail fetch fails */
+    }
     return;
   }
 
