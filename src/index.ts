@@ -202,6 +202,8 @@ function mapPacket(
 }
 
 async function loadPacketDetail(env: Env, id: string, specialties?: Record<string, string>) {
+  await revertReadyPacketsWithOpenItems(env, id);
+
   const packet = await env.DB.prepare(`SELECT * FROM packets WHERE id = ?`)
     .bind(id)
     .first<PacketRow>();
@@ -251,6 +253,51 @@ async function packetHasOpenItems(env: Env, packetId: string): Promise<boolean> 
     .bind(packetId)
     .first<{ n: number }>();
   return (row?.n || 0) > 0;
+}
+
+/** Ready-for-review is invalid while any checklist item is still Pending. */
+async function revertReadyPacketsWithOpenItems(
+  env: Env,
+  packetId?: string
+): Promise<string[]> {
+  let q = `
+    SELECT DISTINCT p.id
+    FROM packets p
+    INNER JOIN packet_items i ON i.packet_id = p.id
+    WHERE p.status = 'ready_for_review' AND i.status = 'pending'`;
+  const binds: string[] = [];
+  if (packetId) {
+    q += ` AND p.id = ?`;
+    binds.push(packetId);
+  }
+
+  const stmt = env.DB.prepare(q);
+  const rows = (
+    binds.length
+      ? await stmt.bind(...binds).all<{ id: string }>()
+      : await stmt.all<{ id: string }>()
+  ).results;
+
+  for (const row of rows) {
+    await env.DB.prepare(
+      `UPDATE packets
+       SET status = 'in_progress', updated_at = datetime('now'), ready_at = NULL
+       WHERE id = ? AND status = 'ready_for_review'`
+    )
+      .bind(row.id)
+      .run();
+
+    await logPacketEvent(
+      env,
+      row.id,
+      null,
+      "status_changed",
+      "Packet returned to In Progress",
+      "Open checklist items remain; Ready for Review requires every item Complete or N/A"
+    );
+  }
+
+  return rows.map((r) => r.id);
 }
 
 async function recomputePacketStatus(env: Env, packetId: string): Promise<PacketStatus> {
@@ -957,6 +1004,9 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     const auth = await requireAuth(env, request);
     if (auth instanceof Response) return auth;
 
+    // Heal stale Ready-for-Review packets that still have open items.
+    await revertReadyPacketsWithOpenItems(env);
+
     const status = url.searchParams.get("status");
     let q = `SELECT * FROM packets`;
     const binds: string[] = [];
@@ -1326,6 +1376,13 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       if (!packet) return error("Packet not found", 404);
       if (packet.status !== "ready_for_review" && packet.status !== "query_pending") {
         return error("Voting is only open for packets ready for review (or with an open query)");
+      }
+      if (packet.status === "ready_for_review" && (await packetHasOpenItems(env, packetId))) {
+        await revertReadyPacketsWithOpenItems(env, packetId);
+        return error(
+          "This packet has open checklist items and was returned to In Progress; voting is closed",
+          409
+        );
       }
 
       const body = (await request.json().catch(() => null)) as {
