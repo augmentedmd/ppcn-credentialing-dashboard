@@ -439,12 +439,16 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     const auth = await requireAdmin(env, request);
     if (auth instanceof Response) return auth;
 
+    // Standard first-login password for all new accounts (must change on sign-in).
+    const TEMP_PASSWORD = "ChangeMeBoard1!";
+
     const body = (await request.json().catch(() => null)) as {
       username?: string;
       displayName?: string;
+      firstName?: string;
+      lastName?: string;
       email?: string;
       role?: string;
-      password?: string;
     } | null;
 
     if (!body) return error("Request body is required");
@@ -453,21 +457,23 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     if (!username) return error("Username is required");
     if (username.length < 3) return error("Username must be at least 3 characters");
 
-    const displayName = body.displayName?.trim();
-    if (!displayName) return error("Display name is required");
+    const firstName = body.firstName?.trim() || "";
+    const lastName = body.lastName?.trim() || "";
+    const displayName =
+      body.displayName?.trim() ||
+      [firstName, lastName].filter(Boolean).join(" ").trim();
+    if (!displayName) return error("First name and last name are required");
+    if (!firstName || !lastName) {
+      return error("First name and last name are required");
+    }
 
     const email = body.email?.trim() || "";
+    if (!email) return error("Email address is required");
 
     const role = body.role;
     if (!role || !["admin", "board", "watcher"].includes(role)) {
       return error("Role must be admin, board, or watcher");
     }
-
-    const password = body.password?.trim();
-    if (!password) return error("Temporary password is required");
-    
-    const passwordCheck = validatePassword(password);
-    if (!passwordCheck.valid) return error(passwordCheck.error!);
 
     const existing = await env.DB.prepare(
       `SELECT id FROM users WHERE username = ? COLLATE NOCASE`
@@ -476,7 +482,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       .first();
     if (existing) return error("Username already exists", 409);
 
-    const { hash, salt } = await hashPassword(password);
+    const { hash, salt } = await hashPassword(TEMP_PASSWORD);
     const userId = newId("usr");
 
     await env.DB.prepare(
@@ -502,6 +508,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           active: !!user.active,
           mustChangePassword: !!user.must_change_password,
         },
+        temporaryPassword: TEMP_PASSWORD,
       },
       { status: 201 }
     );
