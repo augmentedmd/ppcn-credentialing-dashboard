@@ -7,7 +7,7 @@ Part of the [AugmentedMD](https://github.com/augmentedmd/augmentedmd) tool panel
 ## What it does
 
 1. **Packet checklist** — For each provider application, track the documentation components from the [PPCN Privileging Requirements Guide](https://ppcn-credentialing.pages.dev/) (references, licenses, DOP, case log, health forms, etc.) as *Pending*, *Complete*, or *N/A*.
-2. **Ready for review** — When every component is Complete or N/A, credentialing staff marks the packet **Ready for Review**.
+2. **Ready for review** — When every component is Complete or N/A (no open/Pending items), credentialing staff marks the packet **Ready for Review**. If a new checklist item is added while a packet is Ready for Review, it automatically returns to **In Progress**.
 3. **Governing board votes** — Ken Long, Michael Gorin, Michael Herman, Vijay Mukhija, and Stelios Koutsoumbelis each vote **Yes**, **No**, or **Pause for Query**.
 4. **Query workflow** — Pause votes require written concerns; an **Open queries** panel lets staff post a written response on the packet; the packet can return to Ready for Review for re-vote.
 5. **Activity log** — Each packet keeps a dated trail of checklist changes, votes, queries, and responses (open via **Activity log** next to the clinician’s name).
