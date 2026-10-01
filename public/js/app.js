@@ -458,7 +458,7 @@ function renderDetail(p) {
   const canEditItems =
     state.user.role === "admin" &&
     (status === "in_progress" || status === "query_pending");
-  const canEditItemNotes =
+  const canEditPacketNotes =
     state.user.role === "admin" &&
     (status === "in_progress" || status === "query_pending" || status === "ready_for_review");
   const canMarkReady =
@@ -492,9 +492,6 @@ function renderDetail(p) {
       }</div>
       <div class="meta-row">
         <span class="pill">${esc(p.providerType)}</span>
-        ${(p.privilegeBlocks || [])
-          .map((b) => `<span class="pill">${esc(b)}</span>`)
-          .join("")}
       </div>
       <div class="progress-bar detail-progress" aria-hidden="true"><span style="width:${progressPct(p)}%;background:${progressColor(progressPct(p))}"></span></div>
       <div class="progress-label">${esc(progressLabel(p))}</div>
@@ -509,11 +506,6 @@ function renderDetail(p) {
             : ""
         }
         ${
-          state.user.role === "admin" && status === "in_progress" && !p.progress?.allDone
-            ? `<span class="progress-label">Every component must be Complete or N/A — open items block Ready for Review.</span>`
-            : ""
-        }
-        ${
           state.user.role === "admin" && status === "query_pending" && openQueries.length
             ? `<span class="progress-label">Respond to each open query below, then return the packet to review.</span>`
             : ""
@@ -525,11 +517,11 @@ function renderDetail(p) {
       <div class="section-h"><span>Notes</span></div>
       <div class="section-b">
         ${
-          state.user.role === "admin"
+          canEditPacketNotes
             ? `<form id="packet-notes-form" class="notes-form">
                 <label class="fld">
                   <span>Internal notes for this packet</span>
-                  <textarea name="notes" rows="3" placeholder="Add context for credentialing staff or the governing board…">${esc(p.notes || "")}</textarea>
+                  <textarea name="notes" rows="2" placeholder="Add context for credentialing staff or the governing board…">${esc(p.notes || "")}</textarea>
                 </label>
                 <p class="form-error" id="packet-notes-error" hidden></p>
                 <div class="btn-row">
@@ -577,22 +569,6 @@ function renderDetail(p) {
                       : `<span class="status ${item.status === "complete" ? "approved" : item.status === "na" ? "in_progress" : "query_pending"}">${item.status === "complete" ? "Complete" : item.status === "na" ? "N/A" : "Pending"}</span>`
                   }
                 </div>
-                ${
-                  canEditItemNotes
-                    ? `<label class="item-notes-fld">
-                        <span>Notes</span>
-                        <textarea
-                          class="item-notes-input"
-                          data-item-id="${esc(item.id)}"
-                          rows="2"
-                          placeholder="Optional note for this component…"
-                        >${esc(item.notes || "")}</textarea>
-                        <button type="button" class="btn ghost sm item-notes-save" data-action="save-item-notes" data-item="${esc(item.id)}">Save note</button>
-                      </label>`
-                    : item.notes
-                      ? `<div class="notes">${esc(item.notes)}</div>`
-                      : ""
-                }
               </div>
             `;
           })
@@ -908,10 +884,7 @@ function modalNewPacket() {
             <option value="recred">Recredentialing</option>
           </select>
         </label>
-        <label class="fld"><span>Privilege blocks requested (comma-separated)</span>
-          <input name="privilegeBlocks" placeholder="Core privileges, Fluoroscopy">
-        </label>
-        <label class="fld"><span>Notes</span><textarea name="notes" placeholder="Optional internal notes"></textarea></label>
+        <label class="fld"><span>Notes</span><textarea name="notes" rows="2" placeholder="Optional internal notes"></textarea></label>
         <p class="form-error" id="np-error" hidden></p>
         <div class="modal-actions">
           <button type="button" class="btn ghost" data-action="close-modal">Cancel</button>
@@ -1066,10 +1039,6 @@ function bind() {
       e.preventDefault();
       const fd = new FormData(np);
       const err = document.getElementById("np-error");
-      const blocks = String(fd.get("privilegeBlocks") || "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
       try {
         const data = await api("/api/packets", {
           method: "POST",
@@ -1078,7 +1047,7 @@ function bind() {
             providerType: fd.get("providerType"),
             specialty: fd.get("specialty"),
             credentialingType: fd.get("credentialingType"),
-            privilegeBlocks: blocks,
+            privilegeBlocks: [],
             notes: fd.get("notes"),
           }),
         });
@@ -1418,29 +1387,6 @@ async function onAction(e) {
     });
     replacePacket(data.packet);
     render();
-    return;
-  }
-
-  if (action === "save-item-notes") {
-    const itemId = el.getAttribute("data-item");
-    const input = document.querySelector(
-      `.item-notes-input[data-item-id="${CSS.escape(itemId)}"]`
-    );
-    const notes = input ? String(input.value || "") : "";
-    el.disabled = true;
-    el.textContent = "Saving…";
-    try {
-      const data = await api(`/api/packets/${state.packetId}/items/${itemId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ notes }),
-      });
-      replacePacket(data.packet);
-      render();
-    } catch (ex) {
-      el.disabled = false;
-      el.textContent = "Save note";
-      alert(ex.message || "Could not save note");
-    }
     return;
   }
 
