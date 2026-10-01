@@ -77,12 +77,18 @@ export async function verifyPassword(
 }
 
 export function toPublicUser(row: UserRow): PublicUser {
+  // Older DBs may store the demo watcher as role=board because the users
+  // CHECK constraint only allowed admin/board. Treat that account as watcher.
+  const role =
+    row.id === "usr_watcher" || row.username.toLowerCase() === "watcher"
+      ? "watcher"
+      : row.role;
   return {
     id: row.id,
     username: row.username,
     displayName: row.display_name,
     email: row.email,
-    role: row.role,
+    role,
     mustChangePassword: !!row.must_change_password,
   };
 }

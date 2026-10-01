@@ -60,10 +60,19 @@ async function api(path, options = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && !path.includes("/login")) {
-    location.replace("/login.html");
-    throw new Error("Unauthorized");
+    const err = new Error(data.error || "Unauthorized");
+    err.status = 401;
+    // Avoid bouncing login <-> app on transient API failures.
+    if (!options.skipAuthRedirect) {
+      location.replace("/login.html");
+    }
+    throw err;
   }
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) {
+    const err = new Error(data.error || `Request failed (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
@@ -154,7 +163,7 @@ const EVENT_TYPE_LABELS = {
 
 async function bootstrap() {
   try {
-    const me = await api("/api/me");
+    const me = await api("/api/me", { skipAuthRedirect: true });
     state.user = me.user;
     if (state.user.mustChangePassword) {
       state.view = "password";
@@ -163,9 +172,29 @@ async function bootstrap() {
     }
     state.meta = await api("/api/meta");
     await refreshPackets();
+    sessionStorage.removeItem("ppcn_auth_hop");
     render();
-  } catch {
-    location.replace("/login.html");
+  } catch (err) {
+    // Only send unauthenticated users to login. Other errors used to cause a
+    // login <-> dashboard redirect loop (blinking page).
+    if (err?.status === 401) {
+      location.replace("/login.html");
+      return;
+    }
+    console.error(err);
+    app.innerHTML = `
+      <div class="loading-screen" style="gap:12px;padding:32px;text-align:center">
+        <div>Couldn’t load the dashboard.</div>
+        <div style="color:var(--muted);font-size:0.95rem">${esc(err?.message || "Unknown error")}</div>
+        <div class="btn-row" style="justify-content:center">
+          <button class="btn primary" type="button" id="retry-bootstrap">Try again</button>
+          <a class="btn ghost" href="/login.html">Back to sign in</a>
+        </div>
+      </div>`;
+    document.getElementById("retry-bootstrap")?.addEventListener("click", () => {
+      app.innerHTML = `<div class="loading-screen">Loading secure dashboard…</div>`;
+      bootstrap();
+    });
   }
 }
 

@@ -202,7 +202,11 @@ function mapPacket(
 }
 
 async function loadPacketDetail(env: Env, id: string, specialties?: Record<string, string>) {
-  await revertReadyPacketsWithOpenItems(env, id);
+  try {
+    await revertReadyPacketsWithOpenItems(env, id);
+  } catch (err) {
+    console.error("revertReadyPacketsWithOpenItems failed", err);
+  }
 
   const packet = await env.DB.prepare(`SELECT * FROM packets WHERE id = ?`)
     .bind(id)
@@ -232,7 +236,10 @@ async function loadPacketDetail(env: Env, id: string, specialties?: Record<strin
 async function createVoteSlots(env: Env, packetId: string) {
   const board = (
     await env.DB.prepare(
-      `SELECT id, display_name FROM users WHERE role = 'board' AND active = 1 ORDER BY display_name`
+      `SELECT id, display_name FROM users
+       WHERE role = 'board' AND active = 1
+         AND id != 'usr_watcher' AND username != 'watcher'
+       ORDER BY display_name`
     ).all<{ id: string; display_name: string }>()
   ).results;
 
@@ -1005,7 +1012,11 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     if (auth instanceof Response) return auth;
 
     // Heal stale Ready-for-Review packets that still have open items.
-    await revertReadyPacketsWithOpenItems(env);
+    try {
+      await revertReadyPacketsWithOpenItems(env);
+    } catch (err) {
+      console.error("revertReadyPacketsWithOpenItems failed", err);
+    }
 
     const status = url.searchParams.get("status");
     let q = `SELECT * FROM packets`;
