@@ -4,8 +4,8 @@
 -- and just add the email column and specialties table
 
 -- Add email column to users table
--- This will fail silently on subsequent runs if column exists, which is fine
-ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT '';
+-- Using a default value allows this to work on existing tables
+ALTER TABLE users ADD COLUMN email TEXT DEFAULT '';
 
 -- Create specialties table
 CREATE TABLE IF NOT EXISTS specialties (
