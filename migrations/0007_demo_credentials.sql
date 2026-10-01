@@ -1,6 +1,6 @@
 -- Demo credentials + watcher role support for existing databases.
 -- Allows role = 'watcher' by rebuilding the users table CHECK constraint,
--- remaps Michael Gorin's login to board / board, and adds watcher / watcher.
+-- sets easy demo logins (admin/admin, board/board, watcher/watcher).
 
 PRAGMA foreign_keys = OFF;
 
@@ -29,6 +29,18 @@ DROP TABLE users;
 ALTER TABLE users_new RENAME TO users;
 
 PRAGMA foreign_keys = ON;
+
+-- Credentialing staff demo login: admin / admin
+UPDATE users
+SET
+  username = 'admin',
+  display_name = 'Credentialing Admin',
+  role = 'admin',
+  password_hash = 'EgIGFx5S1rte3mZsoy/E7AaQMSYhm+kY+OjSVFG0YHU=',
+  password_salt = 'ojJknmDEvuYdayifs4rg7A==',
+  must_change_password = 0,
+  active = 1
+WHERE id = 'usr_admin';
 
 -- Michael Gorin votes as board / board (no forced password change)
 UPDATE users
