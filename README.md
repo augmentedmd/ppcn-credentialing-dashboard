@@ -24,22 +24,22 @@ Part of the [AugmentedMD](https://github.com/augmentedmd/augmentedmd) tool panel
 
 | Username | Password | Role | Notes |
 |----------|----------|------|-------|
+| `admin` | `admin` | Credentialing staff | Manage packets and checklist |
 | `board` | `board` | Governing board | Votes as **Michael Gorin** |
 | `watcher` | `watcher` | Watcher | Read-only; can view packets and votes |
 
-These two accounts skip the forced password-change prompt so demos stay frictionless.
+These accounts skip the forced password-change prompt so demos stay frictionless.
 
 ## Other default accounts (change on first login)
 
 | Username | Role | Temporary password |
 |----------|------|--------------------|
-| `admin` | Credentialing staff | `ChangeMeAdmin1!` |
 | `ken.long` | Governing board | `ChangeMeBoard1!` |
 | `michael.herman` | Governing board | `ChangeMeBoard1!` |
 | `vijay.mukhija` | Governing board | `ChangeMeBoard1!` |
 | `stelios.koutsoumbelis` | Governing board | `ChangeMeBoard1!` |
 
-Staff and other board users are prompted to change these passwords on first sign-in.
+Other board users are prompted to change these passwords on first sign-in.
 
 ## Local development
 
@@ -70,7 +70,7 @@ Open the URL Wrangler prints (usually `http://127.0.0.1:8787`).
    npm run deploy
    ```
 
-2. After deploy, sign in as `admin`, change the password, then have each board member change theirs.
+2. After deploy, sign in with the demo accounts (`admin`/`admin`, `board`/`board`, `watcher`/`watcher`), then rotate passwords before real use.
 
 3. Optional: add a custom domain in Workers → Settings → Domains.
 
