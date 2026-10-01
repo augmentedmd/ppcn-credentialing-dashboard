@@ -177,7 +177,13 @@ function shell(content) {
         <div class="user-chip">
           <div class="user-meta">
             <strong>${esc(state.user.displayName)}</strong>
-            <span>${state.user.role === "admin" ? "Credentialing staff" : "Governing board"}</span>
+            <span>${
+              state.user.role === "admin"
+                ? "Credentialing staff"
+                : state.user.role === "watcher"
+                  ? "Watcher"
+                  : "Governing board"
+            }</span>
           </div>
           <button class="btn ghost sm" data-action="change-password">Password</button>
           <button class="btn ghost sm" data-action="logout">Sign out</button>
