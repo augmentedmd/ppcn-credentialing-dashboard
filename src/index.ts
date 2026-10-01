@@ -244,6 +244,15 @@ async function createVoteSlots(env: Env, packetId: string) {
   if (stmts.length) await env.DB.batch(stmts);
 }
 
+async function packetHasOpenItems(env: Env, packetId: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM packet_items WHERE packet_id = ? AND status = 'pending'`
+  )
+    .bind(packetId)
+    .first<{ n: number }>();
+  return (row?.n || 0) > 0;
+}
+
 async function recomputePacketStatus(env: Env, packetId: string): Promise<PacketStatus> {
   const packet = await env.DB.prepare(`SELECT * FROM packets WHERE id = ?`)
     .bind(packetId)
@@ -261,6 +270,7 @@ async function recomputePacketStatus(env: Env, packetId: string): Promise<Packet
   const prev = packet.status;
   const cast = votes.filter((v) => v.vote);
   const hasPause = cast.some((v) => v.vote === "pause_for_query");
+  const hasOpenItems = await packetHasOpenItems(env, packetId);
   let next: PacketStatus;
 
   if (hasPause) {
@@ -270,6 +280,15 @@ async function recomputePacketStatus(env: Env, packetId: string): Promise<Packet
       .bind(packetId)
       .run();
     next = "query_pending";
+  } else if (hasOpenItems) {
+    // Charts with any open checklist items cannot be Ready for Review.
+    await env.DB.prepare(
+      `UPDATE packets SET status = 'in_progress', updated_at = datetime('now'),
+         ready_at = NULL, closed_at = NULL WHERE id = ?`
+    )
+      .bind(packetId)
+      .run();
+    next = "in_progress";
   } else if (cast.length < votes.length || votes.length === 0) {
     await env.DB.prepare(
       `UPDATE packets SET status = 'ready_for_review', updated_at = datetime('now'), closed_at = NULL WHERE id = ?`
@@ -1258,8 +1277,10 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       if (detail.status !== "in_progress" && detail.status !== "query_pending") {
         return error("Packet is not eligible to mark ready for review");
       }
-      if (!detail.progress?.allDone) {
-        return error("All checklist items must be Complete or N/A before review");
+      if (!detail.progress?.allDone || (detail.progress?.pendingRequired ?? 0) > 0) {
+        return error(
+          "Packet cannot be Ready for Review while any checklist items are still open (Pending)"
+        );
       }
 
       // Clear prior pause votes when returning from query so board can re-vote

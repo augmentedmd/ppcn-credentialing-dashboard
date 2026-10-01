@@ -177,7 +177,13 @@ function shell(content) {
         <div class="user-chip">
           <div class="user-meta">
             <strong>${esc(state.user.displayName)}</strong>
-            <span>${state.user.role === "admin" ? "Credentialing staff" : "Governing board"}</span>
+            <span>${
+              state.user.role === "admin"
+                ? "Credentialing staff"
+                : state.user.role === "watcher"
+                  ? "Watcher"
+                  : "Governing board"
+            }</span>
           </div>
           <button class="btn ghost sm" data-action="change-password">Password</button>
           <button class="btn ghost sm" data-action="logout">Sign out</button>
@@ -455,7 +461,7 @@ function renderDetail(p) {
         }
         ${
           state.user.role === "admin" && p.status === "in_progress" && !p.progress?.allDone
-            ? `<span class="progress-label">Complete or mark N/A on every component before review.</span>`
+            ? `<span class="progress-label">Every component must be Complete or N/A — open items block Ready for Review.</span>`
             : ""
         }
         ${

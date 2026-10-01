@@ -7,7 +7,7 @@ Part of the [AugmentedMD](https://github.com/augmentedmd/augmentedmd) tool panel
 ## What it does
 
 1. **Packet checklist** — For each provider application, track the documentation components from the [PPCN Privileging Requirements Guide](https://ppcn-credentialing.pages.dev/) (references, licenses, DOP, case log, health forms, etc.) as *Pending*, *Complete*, or *N/A*.
-2. **Ready for review** — When every component is Complete or N/A, credentialing staff marks the packet **Ready for Review**.
+2. **Ready for review** — When every component is Complete or N/A (no open/Pending items), credentialing staff marks the packet **Ready for Review**. If a new checklist item is added while a packet is Ready for Review, it automatically returns to **In Progress**.
 3. **Governing board votes** — Ken Long, Michael Gorin, Michael Herman, Vijay Mukhija, Stelios Koutsoumbelis, and Rich Searles each vote **Yes**, **No**, or **Pause for Query**.
 4. **Query workflow** — Pause votes require written concerns; an **Open queries** panel lets staff post a written response on the packet; the packet can return to Ready for Review for re-vote.
 5. **Comments** — Any authenticated user (including watchers) can add comments to packets; comments are timestamped, attributed to the author, and logged in the activity log.
@@ -20,19 +20,27 @@ Part of the [AugmentedMD](https://github.com/augmentedmd/augmentedmd) tool panel
 - Cloudflare **D1** (SQLite) for users, sessions, packets, checklist items, and votes
 - Session cookie auth (HttpOnly, Secure, SameSite=Lax) with PBKDF2 password hashes
 
-## Default accounts (change on first login)
+## Demo accounts (easy sign-in)
+
+| Username | Password | Role | Notes |
+|----------|----------|------|-------|
+| `admin` | `admin` | Credentialing staff | Manage packets and checklist |
+| `board` | `board` | Governing board | Votes as **Michael Gorin** |
+| `watcher` | `watcher` | Watcher | Read-only; can view packets and votes |
+
+These accounts skip the forced password-change prompt so demos stay frictionless.
+
+## Other default accounts (change on first login)
 
 | Username | Role | Temporary password |
 |----------|------|--------------------|
-| `admin` | Credentialing staff | `ChangeMeAdmin1!` |
 | `ken.long` | Governing board | `ChangeMeBoard1!` |
-| `michael.gorin` | Governing board | `ChangeMeBoard1!` |
 | `michael.herman` | Governing board | `ChangeMeBoard1!` |
 | `vijay.mukhija` | Governing board | `ChangeMeBoard1!` |
 | `stelios.koutsoumbelis` | Governing board | `ChangeMeBoard1!` |
 | `rich.searles` | Governing board | `ChangeMeBoard1!` |
 
-Users are prompted to change these passwords on first sign-in.
+Other board users are prompted to change these passwords on first sign-in.
 
 **Password Requirements:**
 - Minimum 8 characters
@@ -69,7 +77,7 @@ Open the URL Wrangler prints (usually `http://127.0.0.1:8787`).
    npm run deploy
    ```
 
-2. After deploy, sign in as `admin`, change the password, then have each board member change theirs.
+2. After deploy, sign in with the demo accounts (`admin`/`admin`, `board`/`board`, `watcher`/`watcher`), then rotate passwords before real use.
 
 3. Optional: add a custom domain in Workers → Settings → Domains.
 

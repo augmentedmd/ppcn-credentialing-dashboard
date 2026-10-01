@@ -30,33 +30,11 @@ async function main() {
 
   let admin = await req("/api/login", {
     method: "POST",
-    body: { username: "admin", password: "ChangeMeAdmin1!" },
+    body: { username: "admin", password: "admin" },
   });
   console.log("login", admin.data.user.username);
   let cookie = admin.cookie;
-
-  // If password already changed from a prior run, try the new one
   if (!cookie) throw new Error("no session cookie");
-
-  try {
-    const pw = await req("/api/change-password", {
-      method: "POST",
-      cookie,
-      body: {
-        currentPassword: "ChangeMeAdmin1!",
-        newPassword: "AdminSecure99!",
-      },
-    });
-    console.log("password changed", pw.data.ok);
-  } catch (e) {
-    // re-login with new password if already changed
-    admin = await req("/api/login", {
-      method: "POST",
-      body: { username: "admin", password: "AdminSecure99!" },
-    });
-    cookie = admin.cookie;
-    console.log("relogin with rotated password");
-  }
 
   const created = await req("/api/packets", {
     method: "POST",

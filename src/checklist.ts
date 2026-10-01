@@ -240,8 +240,18 @@ export async function applyDefToMatchingPackets(
   const stmt = env.DB.prepare(packetsQ);
   const packets = (
     binds.length
-      ? await stmt.bind(...binds).all<{ id: string; credentialing_type: string; specialty: string; status: string }>()
-      : await stmt.all<{ id: string; credentialing_type: string; specialty: string; status: string }>()
+      ? await stmt.bind(...binds).all<{
+          id: string;
+          credentialing_type: string;
+          specialty: string;
+          status: string;
+        }>()
+      : await stmt.all<{
+          id: string;
+          credentialing_type: string;
+          specialty: string;
+          status: string;
+        }>()
   ).results;
 
   let added = 0;
@@ -275,13 +285,14 @@ export async function applyDefToMatchingPackets(
       )
       .run();
 
+    // Ready packets cannot stay ready once an open requirement is added.
     if (p.status === "ready_for_review") {
       await env.DB.prepare(
         `UPDATE packets SET status = 'in_progress', updated_at = datetime('now'), ready_at = NULL WHERE id = ?`
       )
         .bind(p.id)
         .run();
-      
+
       await env.DB.prepare(
         `INSERT INTO packet_events
           (id, packet_id, actor_user_id, actor_name, event_type, summary, detail)

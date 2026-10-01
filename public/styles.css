@@ -111,6 +111,20 @@ button, input, select, textarea {
   margin: 18px 0 0;
 }
 
+.auth-demo-hint {
+  margin: 4px 0 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.auth-demo-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  color: var(--slate);
+}
+
 .fld {
   display: grid;
   gap: 6px;
