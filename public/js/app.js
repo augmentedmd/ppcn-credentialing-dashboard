@@ -458,6 +458,9 @@ function renderDetail(p) {
   const canEditItems =
     state.user.role === "admin" &&
     (status === "in_progress" || status === "query_pending");
+  const canEditItemNotes =
+    state.user.role === "admin" &&
+    (status === "in_progress" || status === "query_pending" || status === "ready_for_review");
   const canMarkReady =
     state.user.role === "admin" &&
     (status === "in_progress" || status === "query_pending") &&
@@ -495,11 +498,6 @@ function renderDetail(p) {
       </div>
       <div class="progress-bar detail-progress" aria-hidden="true"><span style="width:${progressPct(p)}%;background:${progressColor(progressPct(p))}"></span></div>
       <div class="progress-label">${esc(progressLabel(p))}</div>
-      ${
-        p.notes
-          ? `<p style="margin:14px 0 0;color:var(--muted)">${esc(p.notes)}</p>`
-          : ""
-      }
       <div class="btn-row" style="margin-top:16px">
         ${
           canMarkReady && openQueries.length === 0
@@ -519,6 +517,28 @@ function renderDetail(p) {
           state.user.role === "admin" && status === "query_pending" && openQueries.length
             ? `<span class="progress-label">Respond to each open query below, then return the packet to review.</span>`
             : ""
+        }
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-h"><span>Notes</span></div>
+      <div class="section-b">
+        ${
+          state.user.role === "admin"
+            ? `<form id="packet-notes-form" class="notes-form">
+                <label class="fld">
+                  <span>Internal notes for this packet</span>
+                  <textarea name="notes" rows="3" placeholder="Add context for credentialing staff or the governing board…">${esc(p.notes || "")}</textarea>
+                </label>
+                <p class="form-error" id="packet-notes-error" hidden></p>
+                <div class="btn-row">
+                  <button class="btn primary sm" type="submit">Save notes</button>
+                </div>
+              </form>`
+            : p.notes
+              ? `<p class="notes-readonly">${esc(p.notes)}</p>`
+              : `<p class="notes-empty">No notes yet.</p>`
         }
       </div>
     </section>
@@ -557,7 +577,22 @@ function renderDetail(p) {
                       : `<span class="status ${item.status === "complete" ? "approved" : item.status === "na" ? "in_progress" : "query_pending"}">${item.status === "complete" ? "Complete" : item.status === "na" ? "N/A" : "Pending"}</span>`
                   }
                 </div>
-                ${item.notes ? `<div class="notes">${esc(item.notes)}</div>` : ""}
+                ${
+                  canEditItemNotes
+                    ? `<label class="item-notes-fld">
+                        <span>Notes</span>
+                        <textarea
+                          class="item-notes-input"
+                          data-item-id="${esc(item.id)}"
+                          rows="2"
+                          placeholder="Optional note for this component…"
+                        >${esc(item.notes || "")}</textarea>
+                        <button type="button" class="btn ghost sm item-notes-save" data-action="save-item-notes" data-item="${esc(item.id)}">Save note</button>
+                      </label>`
+                    : item.notes
+                      ? `<div class="notes">${esc(item.notes)}</div>`
+                      : ""
+                }
               </div>
             `;
           })
@@ -1217,6 +1252,37 @@ function bind() {
       }
     });
   });
+
+  const packetNotesForm = document.getElementById("packet-notes-form");
+  if (packetNotesForm) {
+    packetNotesForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(packetNotesForm);
+      const err = document.getElementById("packet-notes-error");
+      const btn = packetNotesForm.querySelector('button[type="submit"]');
+      try {
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = "Saving…";
+        }
+        const data = await api(`/api/packets/${state.packetId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ notes: String(fd.get("notes") || "") }),
+        });
+        replacePacket(data.packet);
+        render();
+      } catch (ex) {
+        if (err) {
+          err.textContent = ex.message;
+          err.hidden = false;
+        }
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "Save notes";
+        }
+      }
+    });
+  }
 }
 
 function replacePacket(packet) {
@@ -1352,6 +1418,29 @@ async function onAction(e) {
     });
     replacePacket(data.packet);
     render();
+    return;
+  }
+
+  if (action === "save-item-notes") {
+    const itemId = el.getAttribute("data-item");
+    const input = document.querySelector(
+      `.item-notes-input[data-item-id="${CSS.escape(itemId)}"]`
+    );
+    const notes = input ? String(input.value || "") : "";
+    el.disabled = true;
+    el.textContent = "Saving…";
+    try {
+      const data = await api(`/api/packets/${state.packetId}/items/${itemId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ notes }),
+      });
+      replacePacket(data.packet);
+      render();
+    } catch (ex) {
+      el.disabled = false;
+      el.textContent = "Save note";
+      alert(ex.message || "Could not save note");
+    }
     return;
   }
 

@@ -672,6 +672,56 @@ main.page {
   font-size: 0.85rem;
 }
 
+.notes-form {
+  display: grid;
+  gap: 12px;
+}
+
+.notes-readonly,
+.notes-empty {
+  margin: 0;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.notes-empty {
+  font-style: italic;
+}
+
+.item-notes-fld {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+}
+
+.item-notes-fld > span {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.item-notes-input {
+  width: 100%;
+  border: 1px solid #cdd5e0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  resize: vertical;
+  min-height: 56px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.item-notes-input:focus {
+  outline: 2px solid color-mix(in srgb, var(--green) 35%, white);
+  border-color: var(--green);
+}
+
+.item-notes-save {
+  justify-self: start;
+}
+
 .item-status {
   display: inline-flex;
   gap: 6px;
