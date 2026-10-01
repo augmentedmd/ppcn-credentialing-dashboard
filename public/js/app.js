@@ -618,7 +618,10 @@ function renderDetail(p) {
           })
           .join("")}
         ${
-          state.user.role === "admin" && canEditItems
+          state.user.role === "admin" &&
+          (status === "in_progress" ||
+            status === "query_pending" ||
+            status === "ready_for_review")
             ? `<div class="btn-row" style="margin-top:4px">
                 <button class="btn ghost sm" data-action="add-packet-item">Add item for this provider</button>
               </div>`
@@ -942,6 +945,39 @@ function modalChecklistDef(defaults = {}) {
   const specialties = state.meta?.specialties || {};
   const packets = state.packets || [];
   const scope = defaults.scope || "global";
+  const lockedToPacket = !!defaults.lockedToPacket && !!defaults.packetId;
+  const lockedPacket =
+    lockedToPacket
+      ? packets.find((p) => p.id === defaults.packetId) || currentPacket()
+      : null;
+
+  if (lockedToPacket) {
+    const providerName =
+      lockedPacket?.providerName ||
+      packets.find((p) => p.id === defaults.packetId)?.providerName ||
+      "this provider";
+    return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <form class="modal" id="checklist-def-form" data-stop data-locked-packet="1">
+        <h3>Add item for this provider</h3>
+        <p style="margin:0;color:var(--muted)">Adds a requirement only to <strong>${esc(providerName)}</strong>.</p>
+        <input type="hidden" name="scope" value="packet">
+        <input type="hidden" name="packetId" value="${esc(defaults.packetId)}">
+        <input type="hidden" name="credentialingType" value="both">
+        <input type="hidden" name="applyToExisting" value="1">
+        <label class="fld"><span>Item label</span>
+          <input name="label" required placeholder="Disclosure Response" value="${esc(defaults.label || "")}" autofocus>
+        </label>
+        <p class="form-error" id="cdef-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" data-action="close-modal">Cancel</button>
+          <button type="submit" class="btn primary">Add item</button>
+        </div>
+      </form>
+    </div>
+  `;
+  }
+
   return `
     <div class="modal-backdrop" data-action="close-modal">
       <form class="modal" id="checklist-def-form" data-stop>
@@ -1207,24 +1243,28 @@ function bind() {
 
   const cdef = document.getElementById("checklist-def-form");
   if (cdef) {
-    const syncScope = () => {
-      const scope = document.getElementById("cdef-scope").value;
-      const setVisible = (wrapId, inputId, visible, required = false) => {
-        const wrap = document.getElementById(wrapId);
-        const input = document.getElementById(inputId);
-        if (!wrap || !input) return;
-        wrap.hidden = !visible;
-        wrap.classList.toggle("is-hidden", !visible);
-        input.disabled = !visible;
-        if (required) input.required = visible;
-        else input.required = false;
+    const lockedPacketForm = cdef.getAttribute("data-locked-packet") === "1";
+    const scopeSelect = document.getElementById("cdef-scope");
+    if (!lockedPacketForm && scopeSelect) {
+      const syncScope = () => {
+        const scope = scopeSelect.value;
+        const setVisible = (wrapId, inputId, visible, required = false) => {
+          const wrap = document.getElementById(wrapId);
+          const input = document.getElementById(inputId);
+          if (!wrap || !input) return;
+          wrap.hidden = !visible;
+          wrap.classList.toggle("is-hidden", !visible);
+          input.disabled = !visible;
+          if (required) input.required = visible;
+          else input.required = false;
+        };
+        setVisible("cdef-type-wrap", "cdef-type", scope !== "packet");
+        setVisible("cdef-specialty-wrap", "cdef-specialty", scope === "specialty", true);
+        setVisible("cdef-packet-wrap", "cdef-packet", scope === "packet", true);
       };
-      setVisible("cdef-type-wrap", "cdef-type", scope !== "packet");
-      setVisible("cdef-specialty-wrap", "cdef-specialty", scope === "specialty", true);
-      setVisible("cdef-packet-wrap", "cdef-packet", scope === "packet", true);
-    };
-    syncScope();
-    document.getElementById("cdef-scope").addEventListener("change", syncScope);
+      syncScope();
+      scopeSelect.addEventListener("change", syncScope);
+    }
     cdef.addEventListener("click", (e) => e.stopPropagation());
     cdef.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -1241,6 +1281,9 @@ function bind() {
         err.hidden = false;
         return;
       }
+      const applyRaw = fd.get("applyToExisting");
+      const applyToExisting =
+        lockedPacketForm || applyRaw === "on" || applyRaw === "1" || applyRaw === "true";
       try {
         await api("/api/checklist-defs", {
           method: "POST",
@@ -1250,7 +1293,7 @@ function bind() {
             credentialingType: scope === "packet" ? "both" : fd.get("credentialingType"),
             specialty: scope === "specialty" ? fd.get("specialty") : null,
             packetId: scope === "packet" ? fd.get("packetId") : null,
-            applyToExisting: fd.get("applyToExisting") === "on",
+            applyToExisting,
           }),
         });
         state.modal = null;
@@ -1570,7 +1613,11 @@ async function onAction(e) {
   }
 
   if (action === "add-packet-item") {
-    state.modal = modalChecklistDef({ scope: "packet", packetId: state.packetId });
+    state.modal = modalChecklistDef({
+      scope: "packet",
+      packetId: state.packetId,
+      lockedToPacket: true,
+    });
     render();
     return;
   }
