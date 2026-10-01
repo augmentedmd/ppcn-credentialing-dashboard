@@ -20,15 +20,15 @@ INSERT OR IGNORE INTO packet_events (id, packet_id, actor_user_id, actor_name, e
   ('evt_demo_mid_02', 'pkt_demo_mid', 'usr_admin', 'Credentialing Admin', 'item_status_changed',
    'Marked “Three Professional References” Done', '', datetime('now', '-20 days')),
   ('evt_demo_mid_03', 'pkt_demo_mid', 'usr_admin', 'Credentialing Admin', 'item_status_changed',
-   'Marked “Training Certificates if applicable…” N/A', 'Not required for this privilege set', datetime('now', '-10 days')),
+   'Marked “Training Certificates if applicable…” N/A', '', datetime('now', '-10 days')),
   ('evt_demo_mid_04', 'pkt_demo_mid', 'usr_admin', 'Credentialing Admin', 'item_status_changed',
-   'Marked “Case Log (specialty template, when required)” Pending', 'Awaiting endoscopy log', datetime('now', '-3 days')),
+   'Marked “Case Log (specialty template, when required)” Pending', '', datetime('now', '-3 days')),
 
   -- Nearly complete
   ('evt_demo_nearly_01', 'pkt_demo_nearly', 'usr_admin', 'Credentialing Admin', 'packet_created',
    'Opened credentialing packet for Priya Patel, PA-C', 'New credentialing · Physician Assistant', datetime('now', '-30 days')),
   ('evt_demo_nearly_02', 'pkt_demo_nearly', 'usr_admin', 'Credentialing Admin', 'item_status_changed',
-   'Marked “Quantiferon TB Test dated within 3 months” Pending', 'Lab draw scheduled', datetime('now', '-1 days')),
+   'Marked “Quantiferon TB Test dated within 3 months” Pending', '', datetime('now', '-1 days')),
 
   -- Checklist complete
   ('evt_demo_complete_01', 'pkt_demo_complete', 'usr_admin', 'Credentialing Admin', 'packet_created',

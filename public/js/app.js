@@ -458,8 +458,8 @@ function renderDetail(p) {
   const canEditItems =
     state.user.role === "admin" &&
     (status === "in_progress" || status === "query_pending");
-  const canEditItemNotes =
-    state.user.role === "admin" &&
+  const canEditNotes =
+    (state.user.role === "admin" || state.user.role === "board") &&
     (status === "in_progress" || status === "query_pending" || status === "ready_for_review");
   const canMarkReady =
     state.user.role === "admin" &&
@@ -525,11 +525,11 @@ function renderDetail(p) {
       <div class="section-h"><span>Notes</span></div>
       <div class="section-b">
         ${
-          state.user.role === "admin"
+          canEditNotes
             ? `<form id="packet-notes-form" class="notes-form">
                 <label class="fld">
-                  <span>Internal notes for this packet</span>
-                  <textarea name="notes" rows="3" placeholder="Add context for credentialing staff or the governing board…">${esc(p.notes || "")}</textarea>
+                  <span>Shared notes for credentialing staff and the governing board</span>
+                  <textarea name="notes" rows="3" placeholder="Add context, questions, or follow-ups…">${esc(p.notes || "")}</textarea>
                 </label>
                 <p class="form-error" id="packet-notes-error" hidden></p>
                 <div class="btn-row">
@@ -578,7 +578,7 @@ function renderDetail(p) {
                   }
                 </div>
                 ${
-                  canEditItemNotes
+                  canEditNotes
                     ? `<label class="item-notes-fld">
                         <span>Notes</span>
                         <textarea

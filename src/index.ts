@@ -131,6 +131,15 @@ async function requireAdmin(env: Env, request: Request): Promise<Authed | Respon
   return auth;
 }
 
+async function requireAdminOrBoard(env: Env, request: Request): Promise<Authed | Response> {
+  const auth = await requireAuth(env, request);
+  if (auth instanceof Response) return auth;
+  if (auth.user.role !== "admin" && auth.user.role !== "board") {
+    return error("Admin or governing board access required", 403);
+  }
+  return auth;
+}
+
 function mapItem(row: PacketItemRow) {
   return {
     id: row.id,
@@ -1171,7 +1180,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     }
 
     if (method === "PATCH" && rest === "") {
-      const auth = await requireAdmin(env, request);
+      const auth = await requireAdminOrBoard(env, request);
       if (auth instanceof Response) return auth;
 
       const existing = await env.DB.prepare(`SELECT * FROM packets WHERE id = ?`)
@@ -1185,11 +1194,26 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         privilegeBlocks?: string[];
       } | null;
 
-      const nextName = body?.providerName?.trim() || existing.provider_name;
+      const isBoard = auth.user.role === "board";
+      if (isBoard) {
+        // Board members may only update notes.
+        if (body?.providerName !== undefined || body?.privilegeBlocks !== undefined) {
+          return error("Governing board members may only update notes", 403);
+        }
+        if (body?.notes === undefined) {
+          return error("Notes are required");
+        }
+      }
+
+      const nextName =
+        isBoard || body?.providerName === undefined
+          ? existing.provider_name
+          : body.providerName.trim() || existing.provider_name;
       const nextNotes = body?.notes !== undefined ? body.notes : existing.notes;
-      const nextBlocks = body?.privilegeBlocks
-        ? JSON.stringify(body.privilegeBlocks)
-        : existing.privilege_blocks;
+      const nextBlocks =
+        isBoard || !body?.privilegeBlocks
+          ? existing.privilege_blocks
+          : JSON.stringify(body.privilegeBlocks);
 
       await env.DB.prepare(
         `UPDATE packets SET
@@ -1212,7 +1236,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           packetId,
           { id: auth.user.id, name: auth.user.displayName },
           "packet_updated",
-          "Updated packet details",
+          isBoard ? "Updated packet notes" : "Updated packet details",
           changes.join("; ")
         );
       }
@@ -1223,7 +1247,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     // Update checklist item
     const itemMatch = rest.match(/^\/items\/([^/]+)$/);
     if (method === "PATCH" && itemMatch) {
-      const auth = await requireAdmin(env, request);
+      const auth = await requireAdminOrBoard(env, request);
       if (auth instanceof Response) return auth;
 
       const itemId = decodeURIComponent(itemMatch[1]);
@@ -1241,10 +1265,18 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         return error("Invalid item status");
       }
 
+      const isBoard = auth.user.role === "board";
+      if (isBoard && body?.status !== undefined) {
+        return error("Governing board members may only update notes", 403);
+      }
+
       const canEditStatus =
-        packet.status === "in_progress" || packet.status === "query_pending";
+        !isBoard &&
+        (packet.status === "in_progress" || packet.status === "query_pending");
       const canEditNotes =
-        canEditStatus || packet.status === "ready_for_review";
+        packet.status === "in_progress" ||
+        packet.status === "query_pending" ||
+        packet.status === "ready_for_review";
       if (!canEditNotes) {
         return error("Checklist notes can only be edited before the packet is closed");
       }
