@@ -202,7 +202,11 @@ function mapPacket(
 }
 
 async function loadPacketDetail(env: Env, id: string, specialties?: Record<string, string>) {
-  await revertReadyPacketsWithOpenItems(env, id);
+  try {
+    await revertReadyPacketsWithOpenItems(env, id);
+  } catch (err) {
+    console.error("revertReadyPacketsWithOpenItems failed", err);
+  }
 
   const packet = await env.DB.prepare(`SELECT * FROM packets WHERE id = ?`)
     .bind(id)
@@ -1005,7 +1009,11 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     if (auth instanceof Response) return auth;
 
     // Heal stale Ready-for-Review packets that still have open items.
-    await revertReadyPacketsWithOpenItems(env);
+    try {
+      await revertReadyPacketsWithOpenItems(env);
+    } catch (err) {
+      console.error("revertReadyPacketsWithOpenItems failed", err);
+    }
 
     const status = url.searchParams.get("status");
     let q = `SELECT * FROM packets`;

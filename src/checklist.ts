@@ -9,18 +9,42 @@ import { newId } from "./checklist-id";
 
 export { newId } from "./checklist-id";
 
+/** Fallback specialty labels used when the specialties table is missing/empty. */
+export const SPECIALTIES: Record<string, string> = {
+  gen_surg: "General Surgery",
+  gi: "Gastroenterology",
+  gyn: "Gynecology",
+  ent: "Otolaryngology",
+  ortho: "Orthopedic Surgery",
+  ophthalmology: "Ophthalmology",
+  plastic: "Plastic Surgery",
+  podiatry: "Podiatry",
+  urology: "Urology",
+  pain: "Pain Medicine",
+  pa: "Physician Assistant",
+  anesthesia_physician: "Anesthesiology — Physician (MD or DO)",
+  anesthesia_crna: "Anesthesiology — CRNA",
+};
+
 /** Load specialties from database as a key->label map */
 export async function loadSpecialtiesMap(env: Env): Promise<Record<string, string>> {
-  const rows = (
-    await env.DB.prepare(
-      `SELECT key, label FROM specialties WHERE active = 1`
-    ).all<{ key: string; label: string }>()
-  ).results;
-  const map: Record<string, string> = {};
-  for (const row of rows) {
-    map[row.key] = row.label;
+  try {
+    const rows = (
+      await env.DB.prepare(
+        `SELECT key, label FROM specialties WHERE active = 1`
+      ).all<{ key: string; label: string }>()
+    ).results;
+    if (!rows.length) return { ...SPECIALTIES };
+    const map: Record<string, string> = {};
+    for (const row of rows) {
+      map[row.key] = row.label;
+    }
+    return map;
+  } catch (err) {
+    // Pre-migration DBs may not have the specialties table yet.
+    console.error("loadSpecialtiesMap fallback", err);
+    return { ...SPECIALTIES };
   }
-  return map;
 }
 
 /** Fallback core packet components (used only if DB templates are empty). */
@@ -73,22 +97,6 @@ export const RECRED_CHECKLIST: ChecklistDef[] = [
       "Renewal training certificates if applicable (Fluoroscopy, Laser/Fire Safety, Chemo Admin, ACLS/BLS)",
   },
 ];
-
-export const SPECIALTIES: Record<string, string> = {
-  gen_surg: "General Surgery",
-  gi: "Gastroenterology",
-  gyn: "Gynecology",
-  ent: "Otolaryngology",
-  ortho: "Orthopedic Surgery",
-  ophthalmology: "Ophthalmology",
-  plastic: "Plastic Surgery",
-  podiatry: "Podiatry",
-  urology: "Urology",
-  pain: "Pain Medicine",
-  pa: "Physician Assistant",
-  anesthesia_physician: "Anesthesiology — Physician (MD or DO)",
-  anesthesia_crna: "Anesthesiology — CRNA",
-};
 
 export const PROVIDER_TYPES: Record<string, string> = {
   surgeon: "Surgeon",
