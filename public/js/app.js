@@ -566,8 +566,7 @@ function renderDetail(p) {
           canEditPacketNotes
             ? `<form id="packet-notes-form" class="notes-form">
                 <label class="fld">
-                  <span>Shared notes for credentialing staff and the governing board</span>
-                  <textarea name="notes" rows="2" placeholder="Add context, questions, or follow-ups…">${esc(p.notes || "")}</textarea>
+                  <textarea name="notes" rows="2" aria-label="Notes" placeholder="Add context, questions, or follow-ups…">${esc(p.notes || "")}</textarea>
                 </label>
                 <p class="form-error" id="packet-notes-error" hidden></p>
                 <div class="btn-row">

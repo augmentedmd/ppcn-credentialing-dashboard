@@ -387,3 +387,33 @@ INSERT OR IGNORE INTO votes (id, packet_id, voter_user_id, voter_name, vote, con
   ('vote_demo_blank_herman', 'pkt_demo_blank', 'usr_michael_herman', 'Michael Herman', NULL, '', ''),
   ('vote_demo_blank_vijay', 'pkt_demo_blank', 'usr_vijay_mukhija', 'Vijay Mukhija', NULL, '', ''),
   ('vote_demo_blank_stelios', 'pkt_demo_blank', 'usr_stelios', 'Stelios Koutsoumbelis', NULL, '', '');
+
+-- Rich Searles board vote slots (added after the original five-member board)
+INSERT OR IGNORE INTO votes (
+  id, packet_id, voter_user_id, voter_name, vote, concern, query_resolution
+)
+SELECT
+  'vote_' || p.id || '_rich_searles',
+  p.id,
+  'usr_rich_searles',
+  'Rich Searles',
+  NULL,
+  '',
+  ''
+FROM packets p
+WHERE p.status IN ('in_progress', 'query_pending', 'ready_for_review');
+
+INSERT OR IGNORE INTO votes (
+  id, packet_id, voter_user_id, voter_name, vote, concern, query_resolution, voted_at
+)
+SELECT
+  'vote_' || p.id || '_rich_searles',
+  p.id,
+  'usr_rich_searles',
+  'Rich Searles',
+  'yes',
+  '',
+  '',
+  coalesce(p.closed_at, datetime('now'))
+FROM packets p
+WHERE p.status IN ('approved', 'denied');
