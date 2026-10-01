@@ -637,12 +637,23 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     const { hash, salt } = await hashPassword(TEMP_PASSWORD);
     const userId = newId("usr");
 
-    await env.DB.prepare(
-      `INSERT INTO users (id, username, display_name, email, role, password_hash, password_salt, must_change_password, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1)`
-    )
-      .bind(userId, username, displayName, email, role, hash, salt)
-      .run();
+    try {
+      await env.DB.prepare(
+        `INSERT INTO users (id, username, display_name, email, role, password_hash, password_salt, must_change_password, active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1)`
+      )
+        .bind(userId, username, displayName, email, role, hash, salt)
+        .run();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (role === "watcher" && /CHECK|constraint|role/i.test(msg)) {
+        return error(
+          "Watcher role is not enabled in this database yet. Apply migration 0011_watcher_role_constraint.sql, then try again.",
+          500
+        );
+      }
+      return error(msg || "Failed to create user", 500);
+    }
 
     const user = await env.DB.prepare(`SELECT * FROM users WHERE id = ?`)
       .bind(userId)
@@ -709,6 +720,29 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         .bind(nextDisplayName, nextEmail, nextRole, nextActive, userId)
         .run();
 
+      const wasBoardVoter =
+        existing.role === "board" &&
+        existing.active === 1 &&
+        existing.id !== "usr_watcher" &&
+        existing.username.toLowerCase() !== "watcher";
+      const isBoardVoter =
+        nextRole === "board" &&
+        nextActive === 1 &&
+        userId !== "usr_watcher" &&
+        (existing.username || "").toLowerCase() !== "watcher";
+
+      if (wasBoardVoter && !isBoardVoter) {
+        await env.DB.prepare(`DELETE FROM votes WHERE voter_user_id = ?`)
+          .bind(userId)
+          .run();
+      } else if (!wasBoardVoter && isBoardVoter) {
+        try {
+          await ensureOpenPacketBoardVoteSlots(env);
+        } catch (err) {
+          console.error("ensureOpenPacketBoardVoteSlots after role change failed", err);
+        }
+      }
+
       const updated = await env.DB.prepare(`SELECT * FROM users WHERE id = ?`)
         .bind(userId)
         .first<UserRow>();
@@ -719,7 +753,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           username: updated!.username,
           displayName: updated!.display_name,
           email: updated!.email,
-          role: updated!.role,
+          role: effectiveUserRole(updated!),
           active: !!updated!.active,
           mustChangePassword: !!updated!.must_change_password,
         },
@@ -734,9 +768,24 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         return error("Cannot delete your own account", 400);
       }
 
-      await env.DB.prepare(`UPDATE users SET active = 0 WHERE id = ?`)
+      const existing = await env.DB.prepare(`SELECT * FROM users WHERE id = ?`)
         .bind(userId)
-        .run();
+        .first<UserRow>();
+      if (!existing) return error("User not found", 404);
+
+      // Remove every trace that would keep them on boards or logged in.
+      await env.DB.batch([
+        env.DB.prepare(`DELETE FROM votes WHERE voter_user_id = ?`).bind(userId),
+        env.DB.prepare(`DELETE FROM sessions WHERE user_id = ?`).bind(userId),
+        env.DB.prepare(`DELETE FROM packet_comments WHERE user_id = ?`).bind(userId),
+        env.DB.prepare(
+          `UPDATE packet_events SET actor_user_id = NULL WHERE actor_user_id = ?`
+        ).bind(userId),
+        env.DB.prepare(
+          `UPDATE packets SET created_by = NULL WHERE created_by = ?`
+        ).bind(userId),
+        env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(userId),
+      ]);
 
       return json({ ok: true });
     }
