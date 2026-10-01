@@ -230,6 +230,18 @@ async function loadPacketDetail(env: Env, id: string, specialties?: Record<strin
     .first<PacketRow>();
   if (!packet) return null;
 
+  if (
+    packet.status === "in_progress" ||
+    packet.status === "query_pending" ||
+    packet.status === "ready_for_review"
+  ) {
+    try {
+      await createVoteSlots(env, id);
+    } catch (err) {
+      console.error("createVoteSlots failed", err);
+    }
+  }
+
   const items = (
     await env.DB.prepare(
       `SELECT * FROM packet_items WHERE packet_id = ? ORDER BY sort_order ASC`
@@ -257,8 +269,8 @@ async function loadPacketDetail(env: Env, id: string, specialties?: Record<strin
   return mapPacket(packet, specs, items, votes);
 }
 
-async function createVoteSlots(env: Env, packetId: string) {
-  const board = (
+async function activeBoardMembers(env: Env) {
+  return (
     await env.DB.prepare(
       `SELECT id, display_name FROM users
        WHERE role = 'board' AND active = 1
@@ -267,6 +279,10 @@ async function createVoteSlots(env: Env, packetId: string) {
        ORDER BY display_name`
     ).all<{ id: string; display_name: string }>()
   ).results;
+}
+
+async function createVoteSlots(env: Env, packetId: string) {
+  const board = await activeBoardMembers(env);
 
   const stmts = board.map((b) =>
     env.DB.prepare(
@@ -287,6 +303,36 @@ async function createVoteSlots(env: Env, packetId: string) {
   )
     .bind(packetId)
     .run();
+}
+
+/** Add missing board vote slots on open packets (does not reopen approved/denied). */
+async function ensureOpenPacketBoardVoteSlots(env: Env) {
+  const board = await activeBoardMembers(env);
+  if (!board.length) return;
+
+  const packets = (
+    await env.DB.prepare(
+      `SELECT id FROM packets
+       WHERE status IN ('in_progress', 'query_pending', 'ready_for_review')`
+    ).all<{ id: string }>()
+  ).results;
+
+  const stmts = [];
+  for (const p of packets) {
+    for (const b of board) {
+      stmts.push(
+        env.DB.prepare(
+          `INSERT OR IGNORE INTO votes
+             (id, packet_id, voter_user_id, voter_name, vote, concern, query_resolution)
+           VALUES (?, ?, ?, ?, NULL, '', '')`
+        ).bind(newId("vote"), p.id, b.id, b.display_name)
+      );
+    }
+  }
+  // D1 batch limit is generous; chunk to stay safe.
+  for (let i = 0; i < stmts.length; i += 50) {
+    await env.DB.batch(stmts.slice(i, i + 50));
+  }
 }
 
 async function packetHasOpenItems(env: Env, packetId: string): Promise<boolean> {
@@ -601,6 +647,14 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       .bind(userId)
       .first<UserRow>();
     if (!user) return error("Failed to create user", 500);
+
+    if (role === "board") {
+      try {
+        await ensureOpenPacketBoardVoteSlots(env);
+      } catch (err) {
+        console.error("ensureOpenPacketBoardVoteSlots after user create failed", err);
+      }
+    }
 
     return json(
       {
@@ -1128,6 +1182,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     try {
       await revertReadyPacketsWithOpenItems(env);
       await promoteCompletePackets(env);
+      await ensureOpenPacketBoardVoteSlots(env);
       // Keep watcher out of board vote grids on existing packets.
       await env.DB.prepare(
         `DELETE FROM votes
