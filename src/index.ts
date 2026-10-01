@@ -1220,9 +1220,6 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         .bind(packetId)
         .first<PacketRow>();
       if (!packet) return error("Packet not found", 404);
-      if (packet.status !== "in_progress" && packet.status !== "query_pending") {
-        return error("Checklist can only be edited while in progress or query pending");
-      }
 
       const body = (await request.json().catch(() => null)) as {
         status?: ItemStatus;
@@ -1233,6 +1230,17 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         return error("Invalid item status");
       }
 
+      const canEditStatus =
+        packet.status === "in_progress" || packet.status === "query_pending";
+      const canEditNotes =
+        canEditStatus || packet.status === "ready_for_review";
+      if (!canEditNotes) {
+        return error("Checklist notes can only be edited before the packet is closed");
+      }
+      if (body?.status && !canEditStatus) {
+        return error("Checklist status can only be edited while in progress or query pending");
+      }
+
       const item = await env.DB.prepare(
         `SELECT * FROM packet_items WHERE id = ? AND packet_id = ?`
       )
@@ -1240,7 +1248,9 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         .first<PacketItemRow>();
       if (!item) return error("Checklist item not found", 404);
 
-      const nextStatus = (body?.status || item.status) as ItemStatus;
+      const nextStatus = (
+        body?.status && canEditStatus ? body.status : item.status
+      ) as ItemStatus;
       const nextNotes = body?.notes !== undefined ? body.notes : item.notes;
 
       await env.DB.prepare(
@@ -1260,15 +1270,17 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         .run();
 
       if (nextStatus !== item.status || nextNotes !== item.notes) {
-        const parts: string[] = [];
-        if (nextNotes !== item.notes && nextNotes.trim()) parts.push(nextNotes.trim());
+        const statusChanged = nextStatus !== item.status;
+        const notesChanged = nextNotes !== item.notes;
         await logPacketEvent(
           env,
           packetId,
           { id: auth.user.id, name: auth.user.displayName },
-          "item_status_changed",
-          `Marked “${item.label}” ${ITEM_STATUS_LABELS[nextStatus]}`,
-          parts.join(" · ")
+          statusChanged ? "item_status_changed" : "packet_updated",
+          statusChanged
+            ? `Marked “${item.label}” ${ITEM_STATUS_LABELS[nextStatus]}`
+            : `Updated notes on “${item.label}”`,
+          notesChanged ? nextNotes.trim() : ""
         );
       }
 
