@@ -871,7 +871,7 @@ function modalDeleteUser(userId, displayName) {
       <form class="modal" id="delete-user-form" data-stop data-user-id="${esc(userId)}">
         <h3>Delete user</h3>
         <p style="margin:0;color:var(--muted)">
-          This will remove access for <strong>${esc(displayName)}</strong>. Type <strong>DELETE USER</strong> to confirm.
+          This permanently deletes <strong>${esc(displayName)}</strong>, including login access and any governing board vote slots. Type <strong>DELETE USER</strong> to confirm.
         </p>
         <label class="fld">
           <span>Confirmation</span>
@@ -1563,6 +1563,14 @@ async function onAction(e) {
     state.packetId = el.getAttribute("data-id");
     state.view = "detail";
     render();
+    // Reload detail so board vote slots (e.g. newly added members) are current.
+    try {
+      const data = await api(`/api/packets/${state.packetId}`);
+      if (data.packet) replacePacket(data.packet);
+      render();
+    } catch (_) {
+      /* keep list snapshot if detail fetch fails */
+    }
     return;
   }
 
