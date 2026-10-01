@@ -84,6 +84,21 @@ function statusBadge(status, pct = null) {
   return `<span class="status ${esc(status)}">${esc(STATUS_LABELS[status] || status)}</span>`;
 }
 
+/** Ready for Review is invalid while any checklist item is still Pending. */
+function effectiveStatus(packet) {
+  if (
+    packet.status === "ready_for_review" &&
+    ((packet.progress?.pendingRequired ?? 0) > 0 || packet.progress?.allDone === false)
+  ) {
+    return "in_progress";
+  }
+  return packet.status;
+}
+
+function isReadyForReview(packet) {
+  return effectiveStatus(packet) === "ready_for_review";
+}
+
 function progressPct(packet) {
   if (!packet.progress || !packet.progress.total) return 0;
   return Math.round((packet.progress.completed / packet.progress.total) * 100);
@@ -239,7 +254,12 @@ function renderPasswordForm(forced) {
 function filteredSortedPackets() {
   const q = state.nameQuery.trim().toLowerCase();
   let packets = state.packets.filter((p) => {
-    if (state.filter !== "all" && p.status !== state.filter) return false;
+    const status = effectiveStatus(p);
+    if (state.filter === "ready_for_review") {
+      if (!isReadyForReview(p)) return false;
+    } else if (state.filter !== "all" && status !== state.filter) {
+      return false;
+    }
     if (state.specialtyFilter !== "all" && p.specialty !== state.specialtyFilter) return false;
     if (progressPct(p) < Number(state.minPct || 0)) return false;
     if (q && !String(p.providerName || "").toLowerCase().includes(q)) return false;
@@ -304,7 +324,7 @@ function renderList() {
   ];
 
   const packets = filteredSortedPackets();
-  const readyCount = state.packets.filter((p) => p.status === "ready_for_review").length;
+  const readyCount = state.packets.filter((p) => isReadyForReview(p)).length;
   const specialties = state.meta?.specialties || {};
 
   return `
@@ -388,6 +408,7 @@ function renderList() {
 function renderPacketCard(p) {
   const pct = progressPct(p);
   const color = progressColor(pct);
+  const status = effectiveStatus(p);
   return `
     <article class="packet-card" data-action="open-packet" data-id="${esc(p.id)}" tabindex="0" role="button">
       <div class="packet-card-top">
@@ -395,7 +416,7 @@ function renderPacketCard(p) {
           <h3>${esc(p.providerName)}</h3>
           <div class="meta">${esc(p.specialtyLabel)} · ${p.credentialingType === "new" ? "New credentialing" : "Recredentialing"}</div>
         </div>
-        ${statusBadge(p.status, pct)}
+        ${statusBadge(status, pct)}
       </div>
       <div class="progress-bar" aria-hidden="true"><span style="width:${pct}%;background:${color}"></span></div>
       <div class="progress-label">${esc(progressLabel(p))}</div>
@@ -404,16 +425,17 @@ function renderPacketCard(p) {
 }
 
 function renderDetail(p) {
+  const status = effectiveStatus(p);
   const canEditItems =
     state.user.role === "admin" &&
-    (p.status === "in_progress" || p.status === "query_pending");
+    (status === "in_progress" || status === "query_pending");
   const canMarkReady =
     state.user.role === "admin" &&
-    (p.status === "in_progress" || p.status === "query_pending") &&
+    (status === "in_progress" || status === "query_pending") &&
     p.progress?.allDone;
   const canVote =
     state.user.role === "board" &&
-    (p.status === "ready_for_review" || p.status === "query_pending");
+    (status === "ready_for_review" || status === "query_pending");
 
   const openQueries = (p.votes || []).filter(
     (v) => v.vote === "pause_for_query" && !v.queryResolution
@@ -428,7 +450,7 @@ function renderDetail(p) {
   return `
     <button class="btn ghost sm detail-back" data-action="back">← All packets</button>
     <section class="detail-hero">
-      <div>${statusBadge(p.status, progressPct(p))}</div>
+      <div>${statusBadge(status, progressPct(p))}</div>
       <div class="detail-title-row">
         <h2>${esc(p.providerName)}</h2>
         <button type="button" class="activity-link" data-action="open-activity">Activity log</button>
@@ -453,19 +475,19 @@ function renderDetail(p) {
         ${
           canMarkReady && openQueries.length === 0
             ? `<button class="btn primary" data-action="mark-ready">${
-                p.status === "query_pending"
+                status === "query_pending"
                   ? "Return to Ready for Review"
                   : "Mark ready for review"
               }</button>`
             : ""
         }
         ${
-          state.user.role === "admin" && p.status === "in_progress" && !p.progress?.allDone
+          state.user.role === "admin" && status === "in_progress" && !p.progress?.allDone
             ? `<span class="progress-label">Every component must be Complete or N/A — open items block Ready for Review.</span>`
             : ""
         }
         ${
-          state.user.role === "admin" && p.status === "query_pending" && openQueries.length
+          state.user.role === "admin" && status === "query_pending" && openQueries.length
             ? `<span class="progress-label">Respond to each open query below, then return the packet to review.</span>`
             : ""
         }
@@ -525,7 +547,7 @@ function renderDetail(p) {
       <div class="section-h slate"><span>Governing board review</span><span>${(p.votes || []).filter((v) => v.vote).length}/${(p.votes || []).length}</span></div>
       <div class="section-b">
         ${
-          p.status === "in_progress"
+          status === "in_progress"
             ? `<div class="banner warn">Board voting unlocks when the packet is marked <strong>Ready for Review</strong>.</div>`
             : ""
         }
