@@ -65,6 +65,7 @@ export function toPublicUser(row: UserRow): PublicUser {
     id: row.id,
     username: row.username,
     displayName: row.display_name,
+    email: row.email,
     role: row.role,
     mustChangePassword: !!row.must_change_password,
   };

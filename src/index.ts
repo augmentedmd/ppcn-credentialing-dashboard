@@ -10,9 +10,9 @@ import {
 } from "./auth";
 import {
   BOARD_MEMBER_IDS,
-  SPECIALTIES,
   applyDefToMatchingPackets,
   listChecklistDefs,
+  loadSpecialtiesMap,
   makeItemKey,
   mapChecklistDef,
   newId,
@@ -28,7 +28,9 @@ import type {
   PacketItemRow,
   PacketRow,
   PacketStatus,
+  ProviderType,
   PublicUser,
+  SpecialtyRow,
   UserRow,
   VoteChoice,
   VoteRow,
@@ -156,6 +158,7 @@ function mapVote(row: VoteRow) {
 
 function mapPacket(
   row: PacketRow,
+  specialties: Record<string, string>,
   items?: PacketItemRow[],
   votes?: VoteRow[]
 ) {
@@ -178,7 +181,7 @@ function mapPacket(
     providerName: row.provider_name,
     providerType: row.provider_type,
     specialty: row.specialty,
-    specialtyLabel: SPECIALTIES[row.specialty] || row.specialty,
+    specialtyLabel: specialties[row.specialty] || row.specialty,
     credentialingType: row.credentialing_type,
     privilegeBlocks,
     status: row.status,
@@ -196,7 +199,7 @@ function mapPacket(
   };
 }
 
-async function loadPacketDetail(env: Env, id: string) {
+async function loadPacketDetail(env: Env, id: string, specialties?: Record<string, string>) {
   const packet = await env.DB.prepare(`SELECT * FROM packets WHERE id = ?`)
     .bind(id)
     .first<PacketRow>();
@@ -218,7 +221,8 @@ async function loadPacketDetail(env: Env, id: string) {
       .all<VoteRow>()
   ).results;
 
-  return mapPacket(packet, items, votes);
+  const specs = specialties || await loadSpecialtiesMap(env);
+  return mapPacket(packet, specs, items, votes);
 }
 
 async function createVoteSlots(env: Env, packetId: string) {
@@ -316,8 +320,9 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
   }
 
   if (method === "GET" && path === "/api/meta") {
+    const specialties = await loadSpecialtiesMap(env);
     return json({
-      specialties: SPECIALTIES,
+      specialties,
       boardMemberIds: BOARD_MEMBER_IDS,
       statuses: [
         "in_progress",
@@ -327,6 +332,345 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         "denied",
       ],
     });
+  }
+
+  // ---- User management (admin only) ----
+  if (method === "GET" && path === "/api/users") {
+    const auth = await requireAdmin(env, request);
+    if (auth instanceof Response) return auth;
+
+    const users = (
+      await env.DB.prepare(
+        `SELECT id, username, display_name, email, role, active, must_change_password, created_at
+         FROM users WHERE active = 1 ORDER BY display_name ASC`
+      ).all<UserRow>()
+    ).results;
+
+    return json({
+      users: users.map((u) => ({
+        id: u.id,
+        username: u.username,
+        displayName: u.display_name,
+        email: u.email,
+        role: u.role,
+        active: !!u.active,
+        mustChangePassword: !!u.must_change_password,
+        createdAt: u.created_at,
+      })),
+    });
+  }
+
+  if (method === "POST" && path === "/api/users") {
+    const auth = await requireAdmin(env, request);
+    if (auth instanceof Response) return auth;
+
+    const body = (await request.json().catch(() => null)) as {
+      username?: string;
+      displayName?: string;
+      email?: string;
+      role?: string;
+      password?: string;
+    } | null;
+
+    if (!body) return error("Request body is required");
+
+    const username = body.username?.trim();
+    if (!username) return error("Username is required");
+    if (username.length < 3) return error("Username must be at least 3 characters");
+
+    const displayName = body.displayName?.trim();
+    if (!displayName) return error("Display name is required");
+
+    const email = body.email?.trim() || "";
+
+    const role = body.role;
+    if (!role || !["admin", "board", "watcher"].includes(role)) {
+      return error("Role must be admin, board, or watcher");
+    }
+
+    const password = body.password?.trim();
+    if (!password) return error("Temporary password is required");
+    if (password.length < 10) return error("Password must be at least 10 characters");
+
+    const existing = await env.DB.prepare(
+      `SELECT id FROM users WHERE username = ? COLLATE NOCASE`
+    )
+      .bind(username)
+      .first();
+    if (existing) return error("Username already exists", 409);
+
+    const { hash, salt } = await hashPassword(password);
+    const userId = newId("usr");
+
+    await env.DB.prepare(
+      `INSERT INTO users (id, username, display_name, email, role, password_hash, password_salt, must_change_password, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1)`
+    )
+      .bind(userId, username, displayName, email, role, hash, salt)
+      .run();
+
+    const user = await env.DB.prepare(`SELECT * FROM users WHERE id = ?`)
+      .bind(userId)
+      .first<UserRow>();
+    if (!user) return error("Failed to create user", 500);
+
+    return json(
+      {
+        user: {
+          id: user.id,
+          username: user.username,
+          displayName: user.display_name,
+          email: user.email,
+          role: user.role,
+          active: !!user.active,
+          mustChangePassword: !!user.must_change_password,
+        },
+      },
+      { status: 201 }
+    );
+  }
+
+  const userMatch = path.match(/^\/api\/users\/([^/]+)$/);
+  if (userMatch) {
+    const userId = decodeURIComponent(userMatch[1]);
+
+    if (method === "PATCH") {
+      const auth = await requireAdmin(env, request);
+      if (auth instanceof Response) return auth;
+
+      const existing = await env.DB.prepare(`SELECT * FROM users WHERE id = ?`)
+        .bind(userId)
+        .first<UserRow>();
+      if (!existing) return error("User not found", 404);
+
+      const body = (await request.json().catch(() => null)) as {
+        displayName?: string;
+        email?: string;
+        role?: string;
+        active?: boolean;
+      } | null;
+
+      const nextDisplayName = body?.displayName?.trim() || existing.display_name;
+      const nextEmail = body?.email?.trim() ?? existing.email;
+      const nextRole = body?.role || existing.role;
+      const nextActive = body?.active !== undefined ? (body.active ? 1 : 0) : existing.active;
+
+      if (nextRole && !["admin", "board", "watcher"].includes(nextRole)) {
+        return error("Role must be admin, board, or watcher");
+      }
+
+      await env.DB.prepare(
+        `UPDATE users SET display_name = ?, email = ?, role = ?, active = ? WHERE id = ?`
+      )
+        .bind(nextDisplayName, nextEmail, nextRole, nextActive, userId)
+        .run();
+
+      const updated = await env.DB.prepare(`SELECT * FROM users WHERE id = ?`)
+        .bind(userId)
+        .first<UserRow>();
+
+      return json({
+        user: {
+          id: updated!.id,
+          username: updated!.username,
+          displayName: updated!.display_name,
+          email: updated!.email,
+          role: updated!.role,
+          active: !!updated!.active,
+          mustChangePassword: !!updated!.must_change_password,
+        },
+      });
+    }
+
+    if (method === "DELETE") {
+      const auth = await requireAdmin(env, request);
+      if (auth instanceof Response) return auth;
+
+      if (userId === auth.user.id) {
+        return error("Cannot delete your own account", 400);
+      }
+
+      await env.DB.prepare(`UPDATE users SET active = 0 WHERE id = ?`)
+        .bind(userId)
+        .run();
+
+      return json({ ok: true });
+    }
+  }
+
+  // ---- Specialty management (admin) ----
+  if (method === "GET" && path === "/api/specialties") {
+    const auth = await requireAuth(env, request);
+    if (auth instanceof Response) return auth;
+
+    const providerType = url.searchParams.get("providerType") as ProviderType | null;
+    let q = `SELECT * FROM specialties WHERE active = 1`;
+    const binds: string[] = [];
+    if (providerType) {
+      q += ` AND provider_type = ?`;
+      binds.push(providerType);
+    }
+    q += ` ORDER BY provider_type ASC, sort_order ASC`;
+
+    const stmt = env.DB.prepare(q);
+    const rows = (
+      binds.length
+        ? await stmt.bind(...binds).all<SpecialtyRow>()
+        : await stmt.all<SpecialtyRow>()
+    ).results;
+
+    return json({
+      specialties: rows.map((s) => ({
+        id: s.id,
+        key: s.key,
+        label: s.label,
+        providerType: s.provider_type,
+        sortOrder: s.sort_order,
+        active: !!s.active,
+        createdAt: s.created_at,
+      })),
+    });
+  }
+
+  if (method === "POST" && path === "/api/specialties") {
+    const auth = await requireAdmin(env, request);
+    if (auth instanceof Response) return auth;
+
+    const body = (await request.json().catch(() => null)) as {
+      key?: string;
+      label?: string;
+      providerType?: ProviderType;
+      sortOrder?: number;
+    } | null;
+
+    if (!body) return error("Request body is required");
+
+    const label = body.label?.trim();
+    if (!label) return error("Specialty label is required");
+
+    const providerType = body.providerType;
+    if (!providerType || !["surgeon", "pa", "anesthesia"].includes(providerType)) {
+      return error("Valid provider type is required");
+    }
+
+    const key = body.key?.trim() || makeItemKey(label);
+
+    const existing = await env.DB.prepare(
+      `SELECT id FROM specialties WHERE key = ? COLLATE NOCASE`
+    )
+      .bind(key)
+      .first();
+    if (existing) return error("Specialty key already exists", 409);
+
+    const sortOrder =
+      typeof body.sortOrder === "number"
+        ? body.sortOrder
+        : (
+            (
+              await env.DB.prepare(
+                `SELECT COALESCE(MAX(sort_order), 0) AS m FROM specialties WHERE provider_type = ?`
+              )
+                .bind(providerType)
+                .first<{ m: number }>()
+            )?.m || 0
+          ) + 1;
+
+    const specialtyId = newId("spec");
+
+    await env.DB.prepare(
+      `INSERT INTO specialties (id, key, label, provider_type, sort_order, active)
+       VALUES (?, ?, ?, ?, ?, 1)`
+    )
+      .bind(specialtyId, key, label, providerType, sortOrder)
+      .run();
+
+    const specialty = await env.DB.prepare(`SELECT * FROM specialties WHERE id = ?`)
+      .bind(specialtyId)
+      .first<SpecialtyRow>();
+    if (!specialty) return error("Failed to create specialty", 500);
+
+    return json(
+      {
+        specialty: {
+          id: specialty.id,
+          key: specialty.key,
+          label: specialty.label,
+          providerType: specialty.provider_type,
+          sortOrder: specialty.sort_order,
+          active: !!specialty.active,
+        },
+      },
+      { status: 201 }
+    );
+  }
+
+  const specialtyMatch = path.match(/^\/api\/specialties\/([^/]+)$/);
+  if (specialtyMatch) {
+    const specialtyId = decodeURIComponent(specialtyMatch[1]);
+
+    if (method === "PATCH") {
+      const auth = await requireAdmin(env, request);
+      if (auth instanceof Response) return auth;
+
+      const existing = await env.DB.prepare(`SELECT * FROM specialties WHERE id = ?`)
+        .bind(specialtyId)
+        .first<SpecialtyRow>();
+      if (!existing || !existing.active) return error("Specialty not found", 404);
+
+      const body = (await request.json().catch(() => null)) as {
+        label?: string;
+        sortOrder?: number;
+      } | null;
+
+      const nextLabel = body?.label?.trim() || existing.label;
+      const nextSort =
+        typeof body?.sortOrder === "number" ? body.sortOrder : existing.sort_order;
+
+      await env.DB.prepare(
+        `UPDATE specialties SET label = ?, sort_order = ? WHERE id = ?`
+      )
+        .bind(nextLabel, nextSort, specialtyId)
+        .run();
+
+      const updated = await env.DB.prepare(`SELECT * FROM specialties WHERE id = ?`)
+        .bind(specialtyId)
+        .first<SpecialtyRow>();
+
+      return json({
+        specialty: {
+          id: updated!.id,
+          key: updated!.key,
+          label: updated!.label,
+          providerType: updated!.provider_type,
+          sortOrder: updated!.sort_order,
+          active: !!updated!.active,
+        },
+      });
+    }
+
+    if (method === "DELETE") {
+      const auth = await requireAdmin(env, request);
+      if (auth instanceof Response) return auth;
+
+      const inUse = await env.DB.prepare(
+        `SELECT COUNT(*) as count FROM packets WHERE specialty = (SELECT key FROM specialties WHERE id = ?)`
+      )
+        .bind(specialtyId)
+        .first<{ count: number }>();
+
+      if (inUse && inUse.count > 0) {
+        return error(
+          "Cannot delete specialty that is in use by existing packets",
+          400
+        );
+      }
+
+      await env.DB.prepare(`UPDATE specialties SET active = 0 WHERE id = ?`)
+        .bind(specialtyId)
+        .run();
+
+      return json({ ok: true });
+    }
   }
 
   // ---- Checklist templates (admin) ----
@@ -370,8 +714,14 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     if (!["new", "recred", "both"].includes(credentialingType)) {
       return error("credentialingType must be new, recred, or both");
     }
-    if (scope === "specialty" && (!body.specialty || !SPECIALTIES[body.specialty])) {
-      return error("Valid specialty is required for specialty-scoped items");
+    if (scope === "specialty") {
+      if (!body.specialty) return error("Valid specialty is required for specialty-scoped items");
+      const specialtyExists = await env.DB.prepare(
+        `SELECT id FROM specialties WHERE key = ? AND active = 1`
+      )
+        .bind(body.specialty)
+        .first();
+      if (!specialtyExists) return error("Valid specialty is required for specialty-scoped items");
     }
     if (scope === "packet") {
       if (!body.packetId) return error("packetId is required for provider-specific items");
@@ -597,6 +947,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
       binds.length ? await stmt.bind(...binds).all<PacketRow>() : await stmt.all<PacketRow>()
     ).results;
 
+    const specialties = await loadSpecialtiesMap(env);
     const details = [];
     for (const p of packets) {
       const items = (
@@ -611,7 +962,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           .bind(p.id)
           .all<VoteRow>()
       ).results;
-      details.push(mapPacket(p, items, votes));
+      details.push(mapPacket(p, specialties, items, votes));
     }
     return json({ packets: details });
   }
@@ -633,7 +984,14 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     if (!body.providerType || !["surgeon", "pa", "anesthesia"].includes(body.providerType)) {
       return error("Valid provider type is required");
     }
-    if (!body.specialty || !SPECIALTIES[body.specialty]) {
+    const specialty = body.specialty;
+    if (!specialty) return error("Valid specialty is required");
+    const specialtyExists = await env.DB.prepare(
+      `SELECT id FROM specialties WHERE key = ? AND active = 1`
+    )
+      .bind(specialty)
+      .first();
+    if (!specialtyExists) {
       return error("Valid specialty is required");
     }
     if (!body.credentialingType || !["new", "recred"].includes(body.credentialingType)) {
@@ -644,7 +1002,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     const blocks = Array.isArray(body.privilegeBlocks) ? body.privilegeBlocks : [];
     const checklist = await resolveChecklistForPacket(env, {
       credentialingType: body.credentialingType as "new" | "recred",
-      specialty: body.specialty,
+      specialty,
       packetId: null,
     });
 
@@ -657,7 +1015,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
         packetId,
         body.providerName.trim(),
         body.providerType,
-        body.specialty,
+        specialty,
         body.credentialingType,
         JSON.stringify(blocks),
         body.notes?.trim() || "",
@@ -683,13 +1041,19 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     if (itemStmts.length) await env.DB.batch(itemStmts);
     await createVoteSlots(env, packetId);
 
+    const specialtyLabel = (
+      await env.DB.prepare(`SELECT label FROM specialties WHERE key = ?`)
+        .bind(specialty)
+        .first<{ label: string }>()
+    )?.label || specialty;
+
     await logPacketEvent(
       env,
       packetId,
       { id: auth.user.id, name: auth.user.displayName },
       "packet_created",
       `Opened credentialing packet for ${body.providerName.trim()}`,
-      `${body.credentialingType === "new" ? "New credentialing" : "Recredentialing"} · ${SPECIALTIES[body.specialty]}`
+      `${body.credentialingType === "new" ? "New credentialing" : "Recredentialing"} · ${specialtyLabel}`
     );
 
     const detail = await loadPacketDetail(env, packetId);
@@ -833,6 +1197,48 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
           parts.join(" · ")
         );
       }
+
+      return json({ packet: await loadPacketDetail(env, packetId) });
+    }
+
+    if (method === "DELETE" && itemMatch) {
+      const auth = await requireAdmin(env, request);
+      if (auth instanceof Response) return auth;
+
+      const itemId = decodeURIComponent(itemMatch[1]);
+      const packet = await env.DB.prepare(`SELECT * FROM packets WHERE id = ?`)
+        .bind(packetId)
+        .first<PacketRow>();
+      if (!packet) return error("Packet not found", 404);
+      if (packet.status !== "in_progress" && packet.status !== "query_pending") {
+        return error("Checklist items can only be deleted while in progress or query pending");
+      }
+
+      const item = await env.DB.prepare(
+        `SELECT * FROM packet_items WHERE id = ? AND packet_id = ?`
+      )
+        .bind(itemId, packetId)
+        .first<PacketItemRow>();
+      if (!item) return error("Checklist item not found", 404);
+
+      await env.DB.prepare(`DELETE FROM packet_items WHERE id = ?`)
+        .bind(itemId)
+        .run();
+
+      await env.DB.prepare(
+        `UPDATE packets SET updated_at = datetime('now') WHERE id = ?`
+      )
+        .bind(packetId)
+        .run();
+
+      await logPacketEvent(
+        env,
+        packetId,
+        { id: auth.user.id, name: auth.user.displayName },
+        "item_status_changed",
+        `Removed checklist item: ${item.label}`,
+        ""
+      );
 
       return json({ packet: await loadPacketDetail(env, packetId) });
     }
