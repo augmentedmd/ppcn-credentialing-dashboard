@@ -461,7 +461,7 @@ function renderDetail(p) {
         }
         ${
           state.user.role === "admin" && p.status === "in_progress" && !p.progress?.allDone
-            ? `<span class="progress-label">Complete or mark N/A on every component before review.</span>`
+            ? `<span class="progress-label">Every component must be Complete or N/A — open items block Ready for Review.</span>`
             : ""
         }
         ${
