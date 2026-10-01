@@ -204,7 +204,7 @@ export async function applyDefToMatchingPackets(
   env: Env,
   def: ChecklistDefRow
 ): Promise<number> {
-  let packetsQ = `SELECT id, credentialing_type, specialty FROM packets WHERE status IN ('in_progress', 'query_pending', 'ready_for_review')`;
+  let packetsQ = `SELECT id, credentialing_type, specialty, status FROM packets WHERE status IN ('in_progress', 'query_pending', 'ready_for_review')`;
   const binds: string[] = [];
 
   if (def.scope === "packet") {
@@ -225,8 +225,8 @@ export async function applyDefToMatchingPackets(
   const stmt = env.DB.prepare(packetsQ);
   const packets = (
     binds.length
-      ? await stmt.bind(...binds).all<{ id: string; credentialing_type: string; specialty: string }>()
-      : await stmt.all<{ id: string; credentialing_type: string; specialty: string }>()
+      ? await stmt.bind(...binds).all<{ id: string; credentialing_type: string; specialty: string; status: string }>()
+      : await stmt.all<{ id: string; credentialing_type: string; specialty: string; status: string }>()
   ).results;
 
   let added = 0;
@@ -259,11 +259,33 @@ export async function applyDefToMatchingPackets(
         def.id
       )
       .run();
-    await env.DB.prepare(
-      `UPDATE packets SET updated_at = datetime('now') WHERE id = ?`
-    )
-      .bind(p.id)
-      .run();
+
+    if (p.status === "ready_for_review") {
+      await env.DB.prepare(
+        `UPDATE packets SET status = 'in_progress', updated_at = datetime('now'), ready_at = NULL WHERE id = ?`
+      )
+        .bind(p.id)
+        .run();
+      
+      await env.DB.prepare(
+        `INSERT INTO packet_events
+          (id, packet_id, actor_user_id, actor_name, event_type, summary, detail)
+         VALUES (?, ?, NULL, 'System', 'status_changed', ?, ?)`
+      )
+        .bind(
+          newId("evt"),
+          p.id,
+          "Packet returned to In Progress",
+          `New requirement added: ${def.label}`
+        )
+        .run();
+    } else {
+      await env.DB.prepare(
+        `UPDATE packets SET updated_at = datetime('now') WHERE id = ?`
+      )
+        .bind(p.id)
+        .run();
+    }
     added += 1;
   }
   return added;
