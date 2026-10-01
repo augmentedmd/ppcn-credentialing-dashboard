@@ -562,6 +562,11 @@ main.page {
   font-weight: 700;
 }
 
+.detail-hero .pill.provider-role {
+  font-size: 0.95rem;
+  padding: 6px 13px;
+}
+
 .section {
   background: var(--card);
   border: 1px solid var(--line);

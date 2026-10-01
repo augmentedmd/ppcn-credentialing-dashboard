@@ -30,6 +30,22 @@ const SPECIALTY_BY_PROVIDER = {
   anesthesia: ["anesthesia_physician", "anesthesia_crna"],
 };
 
+const PROVIDER_ROLE_LABELS = {
+  surgeon: "Surgeon",
+  pa: "Physician Assistant",
+  anesthesia: "Anesthesiologist",
+  anesthesia_physician: "Anesthesiologist",
+  anesthesia_crna: "CRNA",
+};
+
+function providerRoleLabel(packet) {
+  if (packet?.specialty === "anesthesia_crna") return PROVIDER_ROLE_LABELS.anesthesia_crna;
+  if (packet?.specialty === "anesthesia_physician") {
+    return PROVIDER_ROLE_LABELS.anesthesia_physician;
+  }
+  return PROVIDER_ROLE_LABELS[packet?.providerType] || packet?.providerType || "";
+}
+
 let state = {
   user: null,
   meta: null,
@@ -491,7 +507,7 @@ function renderDetail(p) {
         p.credentialingType === "new" ? "New credentialing" : "Recredentialing"
       }</div>
       <div class="meta-row">
-        <span class="pill">${esc(p.providerType)}</span>
+        <span class="pill provider-role">${esc(providerRoleLabel(p))}</span>
       </div>
       <div class="progress-bar detail-progress" aria-hidden="true"><span style="width:${progressPct(p)}%;background:${progressColor(progressPct(p))}"></span></div>
       <div class="progress-label">${esc(progressLabel(p))}</div>
